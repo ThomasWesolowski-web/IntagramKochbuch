@@ -58,7 +58,12 @@ Lies eingeblendeten Text und Untertitel in den Bildern und nutze die Beschreibun
 - Werbung, Hashtags und Aufrufe wie "Folgt mir" weglassen.
 Wenn kein Rezept erkennbar ist, setze "ist_rezept" auf false und erkläre es in "hinweise".`;
 
-export class ExtraktionsFehler extends Error {}
+export class ExtraktionsFehler extends Error {
+  constructor(message, { keinRezept = false } = {}) {
+    super(message);
+    this.keinRezept = keinRezept;
+  }
+}
 
 function fehlertext(err) {
   if (err instanceof Anthropic.AuthenticationError) return 'Der API-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.';
@@ -91,8 +96,8 @@ function auswerten(text) {
   } catch {
     throw new ExtraktionsFehler('Die Antwort war unvollständig. Bitte erneut versuchen.');
   }
-  if (!daten.ist_rezept) throw new ExtraktionsFehler(daten.hinweise || 'In diesem Reel wurde kein Rezept gefunden.');
-  // Gemini hält sich nicht immer an jedes Feld: fehlende Teile auffüllen
+  if (!daten.ist_rezept) throw new ExtraktionsFehler(daten.hinweise || 'In diesem Reel wurde kein Rezept gefunden.', { keinRezept: true });
+  // Gemini und Groq halten sich nicht immer an jedes Feld: fehlende Teile auffüllen
   return {
     titel: daten.titel || 'Ohne Titel',
     beschreibung: daten.beschreibung || '',
@@ -112,7 +117,20 @@ function auswerten(text) {
 export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
   eingabePruefen(eingabe);
   if (settings.anbieter === 'claude') return mitClaude(eingabe, settings, onStatus);
-  return mitGemini(eingabe, settings, onStatus);
+  if (settings.anbieter === 'groq') return mitGroq(eingabe, settings, onStatus);
+  // Gemini zuerst; klemmt es (Limit, Überlastung, Netz), springt Groq ein, falls ein Schlüssel da ist.
+  if (!settings.geminiKey && settings.groqKey) return mitGroq(eingabe, settings, onStatus);
+  try {
+    return await mitGemini(eingabe, settings, onStatus);
+  } catch (err) {
+    if (!settings.groqKey || err.keinRezept) throw err;
+    onStatus('Gemini klemmt, Groq übernimmt …');
+    try {
+      return await mitGroq(eingabe, settings, onStatus);
+    } catch (err2) {
+      throw new ExtraktionsFehler(`Gemini: ${err.message}\nGroq: ${err2.message}`, { keinRezept: err2.keinRezept });
+    }
+  }
 }
 
 // ---------- Claude ----------
@@ -287,5 +305,133 @@ async function mitGemini(eingabe, settings, onStatus) {
   if (kandidat?.finishReason === 'MAX_TOKENS') throw new ExtraktionsFehler('Die Antwort war zu lang und wurde abgeschnitten.');
   const text = (kandidat?.content?.parts || []).map((p) => p.text || '').join('');
   if (!text) throw new ExtraktionsFehler('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
+  return auswerten(text);
+}
+
+// ---------- Groq ----------
+// Kostenloses Kontingent, OpenAI-kompatible Schnittstelle. Groq nimmt höchstens 5 Bilder pro Anfrage,
+// deshalb werden die Standbilder zu nummerierten Kollagen (je 2 × 2) zusammengesetzt.
+
+const GROQ_API = 'https://api.groq.com/openai/v1';
+const GROQ_STANDARD = 'meta-llama/llama-4-scout-17b-16e-instruct';
+const GROQ_MAX_BILDER = 5;
+
+async function bildLaden(blob) {
+  if ('createImageBitmap' in window) return createImageBitmap(blob);
+  const img = new Image();
+  img.src = URL.createObjectURL(blob);
+  await img.decode();
+  return img;
+}
+
+// Kollagen mit je bis zu 4 Standbildern; jede Kachel trägt groß ihre Nummer.
+async function kollagen(bilder) {
+  const proKollage = Math.max(4, Math.ceil(bilder.length / GROQ_MAX_BILDER));
+  const spalten = Math.ceil(Math.sqrt(proKollage));
+  const ergebnis = [];
+  for (let start = 0; start < bilder.length; start += proKollage) {
+    const gruppe = bilder.slice(start, start + proKollage);
+    const geladen = await Promise.all(gruppe.map((b) => bildLaden(b.blob)));
+    const kw = 360;
+    const kh = Math.round(kw * (geladen[0].height / geladen[0].width));
+    const zeilen = Math.ceil(gruppe.length / spalten);
+    const canvas = document.createElement('canvas');
+    canvas.width = kw * Math.min(spalten, gruppe.length);
+    canvas.height = kh * zeilen;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    geladen.forEach((img, i) => {
+      const x = (i % spalten) * kw;
+      const y = Math.floor(i / spalten) * kh;
+      ctx.drawImage(img, x, y, kw, kh);
+      ctx.fillStyle = '#d4472b';
+      ctx.fillRect(x, y, 64, 44);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 30px sans-serif';
+      ctx.fillText(String(gruppe[i].index), x + 10, y + 33);
+      if (img.close) img.close();
+    });
+    const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.75));
+    ergebnis.push({ blob, nummern: gruppe.map((b) => `${b.index} (${zeitLabel(b.zeit)})`) });
+  }
+  return ergebnis;
+}
+
+async function groqFehler(res) {
+  const data = await res.json().catch(() => ({}));
+  const msg = data.error?.message || '';
+  if (res.status === 401) return 'Der Groq-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.';
+  if (res.status === 429) return 'Das kostenlose Groq-Kontingent ist gerade aufgebraucht. Bitte kurz warten.';
+  if (res.status >= 500) return `Groq meldet einen Fehler (${res.status}). Bitte erneut versuchen.`;
+  return `Groq hat die Anfrage abgelehnt: ${msg || res.status}`;
+}
+
+// Falls Groq das Standardmodell abschafft: ein anderes Bildmodell aus der Liste nehmen.
+async function groqAusweichmodell(key, ohne) {
+  try {
+    const res = await fetch(`${GROQ_API}/models`, { headers: { Authorization: `Bearer ${key}` } });
+    if (!res.ok) return null;
+    const { data = [] } = await res.json();
+    const ids = data.filter((m) => m.active !== false).map((m) => m.id).filter((id) => id !== ohne);
+    return ids.find((id) => /llama-4|scout|maverick/i.test(id)) || ids.find((id) => /vision|-vl/i.test(id)) || null;
+  } catch {
+    return null;
+  }
+}
+
+async function mitGroq(eingabe, settings, onStatus) {
+  const key = settings.groqKey;
+  if (!key) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen kostenlosen Groq-Schlüssel eintragen.');
+
+  const content = [];
+  if (eingabe.bilder.length) {
+    for (const k of await kollagen(eingabe.bilder)) {
+      content.push({ type: 'text', text: `Kollage mit den Standbildern ${k.nummern.join(', ')}. Die Nummer steht oben links in jeder Kachel.` });
+      content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${await blobToBase64(k.blob)}` } });
+    }
+  }
+  content.push({ type: 'text', text: textTeil(eingabe) });
+  const system = `${SYSTEM}\n\nAntworte nur mit einem JSON-Objekt nach diesem JSON-Schema, ohne weiteren Text:\n${JSON.stringify(SCHEMA)}`;
+
+  onStatus('Groq liest das Rezept …');
+  const anfrage = async (modell) => {
+    try {
+      return await fetch(`${GROQ_API}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: modell,
+          messages: [{ role: 'system', content: system }, { role: 'user', content }],
+          response_format: { type: 'json_object' },
+          temperature: 0.2,
+          max_completion_tokens: 8000,
+        }),
+      });
+    } catch {
+      throw new ExtraktionsFehler('Keine Verbindung zu Groq. Ist das Handy online?');
+    }
+  };
+
+  let res = await anfrage(GROQ_STANDARD);
+  if (res.status === 404 || res.status === 400) {
+    const fehler = await res.clone().json().catch(() => ({}));
+    if (res.status === 404 || /model/i.test(fehler.error?.code || fehler.error?.message || '')) {
+      const ersatz = await groqAusweichmodell(key, GROQ_STANDARD);
+      if (ersatz) res = await anfrage(ersatz);
+    }
+  }
+  if (res.status === 429 || res.status === 503) {
+    onStatus('Groq ist ausgelastet, neuer Versuch …');
+    await pause(4000);
+    res = await anfrage(GROQ_STANDARD);
+  }
+  if (!res.ok) throw new ExtraktionsFehler(await groqFehler(res));
+
+  const data = await res.json();
+  const wahl = data.choices?.[0];
+  if (wahl?.finish_reason === 'length') throw new ExtraktionsFehler('Die Antwort war zu lang und wurde abgeschnitten.');
+  const text = wahl?.message?.content || '';
+  if (!text) throw new ExtraktionsFehler('Groq hat keine Antwort geliefert. Bitte erneut versuchen.');
   return auswerten(text);
 }

@@ -1,4 +1,4 @@
-// Instagram Kochbuch: Reels teilen oder hochladen, eine KI (Gemini oder Claude) macht daraus ein Rezept.
+// Instagram Kochbuch: Reels teilen oder hochladen, eine KI (Gemini, Groq oder Claude) macht daraus ein Rezept.
 // Alles bleibt auf dem Handy (IndexedDB), nur die Standbilder und die Beschreibung
 // gehen zum Erkennen an den gewählten Anbieter.
 
@@ -6,7 +6,7 @@ import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.2.2';
+const APP_VERSION = '0.3.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -439,7 +439,9 @@ async function renderNeu(params) {
     fehler.innerHTML = '';
     const text = $('#beschreibung').value;
     const quelle = $('#link').value.trim();
-    if (!(settings.anbieter === 'claude' ? settings.apiKey : settings.geminiKey)) {
+    const hatSchluessel = settings.anbieter === 'claude' ? settings.apiKey
+      : settings.anbieter === 'groq' ? settings.groqKey : (settings.geminiKey || settings.groqKey);
+    if (!hatSchluessel) {
       fehler.innerHTML = '<div class="err">Bitte zuerst in den <a href="#/einstellungen">Einstellungen</a> einen API-Schlüssel eintragen.</div>';
       return;
     }
@@ -607,7 +609,8 @@ function renderEinstellungen() {
       <h2>Rezepte erkennen mit</h2>
       <label class="field"><span>Anbieter</span>
         <select id="s-anbieter">
-          <option value="gemini" ${settings.anbieter !== 'claude' ? 'selected' : ''}>Google Gemini (kostenlos)</option>
+          <option value="gemini" ${!['claude', 'groq'].includes(settings.anbieter) ? 'selected' : ''}>Google Gemini, Groq als Ersatz (kostenlos)</option>
+          <option value="groq" ${settings.anbieter === 'groq' ? 'selected' : ''}>Nur Groq (kostenlos)</option>
           <option value="claude" ${settings.anbieter === 'claude' ? 'selected' : ''}>Claude (kostenpflichtig)</option>
         </select>
       </label>
@@ -617,6 +620,13 @@ function renderEinstellungen() {
         </label>
         <p class="hint">Kostenlos unter <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> mit einem Google-Konto anlegen.
           Im kostenlosen Kontingent darf Google die Anfragen zur Verbesserung seiner Dienste nutzen. Es gibt ein Tageslimit.</p>
+      </div>
+      <div id="s-groq">
+        <label class="field"><span>Groq API-Schlüssel</span>
+          <input id="s-qkey" type="password" autocomplete="off" placeholder="gsk_…" value="${esc(settings.groqKey)}">
+        </label>
+        <p class="hint">Kostenlos unter <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> anlegen, ohne Kreditkarte.
+          Springt ein, wenn Gemini am Limit oder überlastet ist.</p>
       </div>
       <div id="s-claude">
         <label class="field"><span>Claude API-Schlüssel</span>
@@ -636,9 +646,10 @@ function renderEinstellungen() {
       <p class="hint" style="margin-top:0">Version ${APP_VERSION}. Rezepte und Bilder sind nur auf diesem Handy gespeichert.</p>
     </section>`;
   const umschalten = () => {
-    const claude = $('#s-anbieter').value === 'claude';
-    $('#s-gemini').hidden = claude;
-    $('#s-claude').hidden = !claude;
+    const a = $('#s-anbieter').value;
+    $('#s-gemini').hidden = a !== 'gemini';
+    $('#s-groq').hidden = a === 'claude';
+    $('#s-claude').hidden = a !== 'claude';
   };
   umschalten();
   $('#s-anbieter').addEventListener('change', umschalten);
@@ -647,6 +658,7 @@ function renderEinstellungen() {
       ...settings,
       anbieter: $('#s-anbieter').value,
       geminiKey: $('#s-gkey').value.trim(),
+      groqKey: $('#s-qkey').value.trim(),
       apiKey: $('#s-key').value.trim(),
       modell: $('#s-modell').value,
     };
