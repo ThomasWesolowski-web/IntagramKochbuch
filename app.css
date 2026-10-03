@@ -73,6 +73,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg);
@@ -344,6 +345,17 @@ body.editing .tabbar { display: none; }
 .err { white-space: pre-line; background: var(--danger-soft); color: var(--danger); border-radius: 12px; padding: 12px 14px; font-weight: 600; margin-bottom: 12px; }
 .howto { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: .92rem; }
 .howto li { margin-bottom: 6px; }
+
+/* Einstellungen: gesperrte Schlüssel */
+.felder { border: 0; margin: 0; padding: 0; min-width: 0; }
+.felder:disabled .field input, .felder:disabled .field select { opacity: .6; }
+.sperre {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between;
+  background: var(--pastell-3); border-radius: 16px; padding: 10px 12px; margin-bottom: 14px; font-weight: 700; font-size: .9rem;
+}
+.sperre > span { display: inline-flex; align-items: center; gap: 8px; flex: 1 1 180px; min-width: 0; }
+.sperre svg { width: 20px; height: 20px; flex: none; }
+.sperre .btn { min-height: 40px; padding: 8px 14px; }
 
 /* Bearbeiten */
 .ed-step { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px; }
