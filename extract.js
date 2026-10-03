@@ -1,5 +1,6 @@
-// Aus Standbildern, Beschreibung und Link ein Rezept machen (Claude API).
-// Der API-Schlüssel bleibt auf dem Handy; die Anfrage geht direkt vom Browser an Anthropic.
+// Aus Standbildern, Beschreibung und Link ein Rezept machen.
+// Zwei Anbieter: Google Gemini (kostenloses Kontingent) oder Claude (kostenpflichtig).
+// Der API-Schlüssel bleibt auf dem Handy; die Anfrage geht direkt vom Browser an den Anbieter.
 
 import Anthropic from './vendor/anthropic-sdk.mjs';
 import { blobToBase64, zeitLabel } from './video.js';
@@ -48,7 +49,7 @@ const SCHEMA = {
   },
 };
 
-const SYSTEM = `Du machst aus Instagram-Koch-Reels ein Rezept zum Nachkochen, auf Deutsch.
+export const SYSTEM = `Du machst aus Instagram-Koch-Reels ein Rezept zum Nachkochen, auf Deutsch.
 Du bekommst Standbilder aus dem Video (nummeriert, mit Zeitstempel), die Beschreibung des Posts und eventuell den Link.
 Lies eingeblendeten Text und Untertitel in den Bildern und nutze die Beschreibung. Was du siehst, hat Vorrang vor Vermutungen.
 - Zutaten mit Mengen in metrischen Einheiten (Cups, oz, °F umrechnen). Fehlt eine Menge, schätze sie für die angegebene Portionenzahl und setze "geschaetzt" auf true.
@@ -69,13 +70,55 @@ function fehlertext(err) {
   return err?.message || String(err);
 }
 
-// eingabe: { bilder: [{index, zeit, blob}], beschreibung, link }, settings: { apiKey, modell }
-export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
-  if (!settings.apiKey) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen Claude API-Schlüssel eintragen.');
+function eingabePruefen(eingabe) {
   if (!eingabe.bilder.length && !eingabe.beschreibung.trim()) {
     throw new ExtraktionsFehler('Bitte ein Video auswählen oder die Beschreibung einfügen.');
   }
+}
 
+function textTeil(eingabe) {
+  const teile = [];
+  if (eingabe.link) teile.push(`Link: ${eingabe.link}`);
+  teile.push(eingabe.beschreibung.trim() ? `Beschreibung des Posts:\n${eingabe.beschreibung.trim()}` : 'Keine Beschreibung vorhanden.');
+  if (!eingabe.bilder.length) teile.push('Es gibt keine Standbilder, nur den Text.');
+  return teile.join('\n\n');
+}
+
+function auswerten(text) {
+  let daten;
+  try {
+    daten = JSON.parse(text);
+  } catch {
+    throw new ExtraktionsFehler('Die Antwort war unvollständig. Bitte erneut versuchen.');
+  }
+  if (!daten.ist_rezept) throw new ExtraktionsFehler(daten.hinweise || 'In diesem Reel wurde kein Rezept gefunden.');
+  // Gemini hält sich nicht immer an jedes Feld: fehlende Teile auffüllen
+  return {
+    titel: daten.titel || 'Ohne Titel',
+    beschreibung: daten.beschreibung || '',
+    portionen: Number.isInteger(daten.portionen) ? daten.portionen : null,
+    zubereitungszeit: daten.zubereitungszeit || '',
+    zutaten: (daten.zutaten || []).map((z) => ({
+      gruppe: z.gruppe || '', menge: typeof z.menge === 'number' ? z.menge : null, einheit: z.einheit || '',
+      name: z.name || '', hinweis: z.hinweis || '', geschaetzt: Boolean(z.geschaetzt),
+    })).filter((z) => z.name),
+    schritte: (daten.schritte || []).filter((x) => x.text).map((x) => ({ text: x.text, bild: Number.isInteger(x.bild) ? x.bild : null })),
+    titelbild: Number.isInteger(daten.titelbild) ? daten.titelbild : null,
+    tags: daten.tags || [],
+    hinweise: daten.hinweise || '',
+  };
+}
+
+export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
+  eingabePruefen(eingabe);
+  if (settings.anbieter === 'claude') return mitClaude(eingabe, settings, onStatus);
+  return mitGemini(eingabe, settings, onStatus);
+}
+
+// ---------- Claude ----------
+
+async function mitClaude(eingabe, settings, onStatus) {
+  if (!settings.apiKey) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen Claude API-Schlüssel eintragen.');
   const client = new Anthropic({ apiKey: settings.apiKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
 
   const content = [];
@@ -83,11 +126,7 @@ export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
     content.push({ type: 'text', text: `Standbild ${b.index} (${zeitLabel(b.zeit)})` });
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: await blobToBase64(b.blob) } });
   }
-  const teile = [];
-  if (eingabe.link) teile.push(`Link: ${eingabe.link}`);
-  teile.push(eingabe.beschreibung.trim() ? `Beschreibung des Posts:\n${eingabe.beschreibung.trim()}` : 'Keine Beschreibung vorhanden.');
-  if (!eingabe.bilder.length) teile.push('Es gibt keine Standbilder, nur den Text.');
-  content.push({ type: 'text', text: teile.join('\n\n') });
+  content.push({ type: 'text', text: textTeil(eingabe) });
 
   onStatus('Claude liest das Rezept …');
   let msg;
@@ -109,13 +148,94 @@ export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
 
   if (msg.stop_reason === 'refusal') throw new ExtraktionsFehler('Claude hat die Anfrage abgelehnt.');
   if (msg.stop_reason === 'max_tokens') throw new ExtraktionsFehler('Die Antwort war zu lang und wurde abgeschnitten.');
-  const text = msg.content.filter((c) => c.type === 'text').map((c) => c.text).join('');
-  let daten;
-  try {
-    daten = JSON.parse(text);
-  } catch {
-    throw new ExtraktionsFehler('Die Antwort von Claude war unvollständig. Bitte erneut versuchen.');
+  return auswerten(msg.content.filter((c) => c.type === 'text').map((c) => c.text).join(''));
+}
+
+// ---------- Gemini ----------
+
+const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta';
+// Alias auf das aktuelle Flash-Modell; Flash ist im kostenlosen Kontingent enthalten
+export const GEMINI_STANDARD = 'gemini-flash-latest';
+
+// Gemini erwartet das Schema im OpenAPI-Stil: nullable statt Typ-Listen, kein additionalProperties.
+function geminiSchema(s) {
+  const out = {};
+  let typ = s.type;
+  if (Array.isArray(typ)) { out.nullable = typ.includes('null'); typ = typ.find((t) => t !== 'null'); }
+  out.type = typ.toUpperCase();
+  if (s.description) out.description = s.description;
+  if (s.properties) {
+    out.properties = Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, geminiSchema(v)]));
+    out.required = s.required;
+    out.propertyOrdering = Object.keys(s.properties);
   }
-  if (!daten.ist_rezept) throw new ExtraktionsFehler(daten.hinweise || 'In diesem Reel wurde kein Rezept gefunden.');
-  return daten;
+  if (s.items) out.items = geminiSchema(s.items);
+  return out;
+}
+
+async function geminiFehler(res) {
+  const data = await res.json().catch(() => ({}));
+  const msg = data.error?.message || '';
+  if (res.status === 400 && /api key/i.test(msg)) return 'Der Gemini-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.';
+  if (res.status === 403) return 'Der Gemini-Schlüssel darf diese Anfrage nicht stellen.';
+  if (res.status === 429) return 'Das kostenlose Gemini-Kontingent ist für heute oder diese Minute aufgebraucht. Bitte später erneut versuchen.';
+  if (res.status >= 500) return `Gemini meldet einen Fehler (${res.status}). Bitte erneut versuchen.`;
+  return `Gemini hat die Anfrage abgelehnt: ${msg || res.status}`;
+}
+
+// Falls der Alias einmal nicht mehr existiert: ein verfügbares Flash-Modell suchen.
+async function geminiModellSuchen(key) {
+  const res = await fetch(`${GEMINI_API}/models?pageSize=200&key=${encodeURIComponent(key)}`);
+  if (!res.ok) return null;
+  const { models = [] } = await res.json();
+  const flash = models
+    .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+    .map((m) => m.name.replace(/^models\//, ''))
+    .filter((n) => /flash/.test(n) && !/lite|image|tts|live|audio|preview|exp/.test(n))
+    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
+  return flash[0] || null;
+}
+
+async function mitGemini(eingabe, settings, onStatus) {
+  const key = settings.geminiKey;
+  if (!key) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen kostenlosen Gemini-Schlüssel eintragen.');
+
+  const parts = [];
+  for (const b of eingabe.bilder) {
+    parts.push({ text: `Standbild ${b.index} (${zeitLabel(b.zeit)})` });
+    parts.push({ inlineData: { mimeType: 'image/jpeg', data: await blobToBase64(b.blob) } });
+  }
+  parts.push({ text: textTeil(eingabe) });
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: SYSTEM }] },
+    contents: [{ role: 'user', parts }],
+    generationConfig: { responseMimeType: 'application/json', responseSchema: geminiSchema(SCHEMA) },
+  });
+
+  onStatus('Gemini liest das Rezept …');
+  const anfrage = async (modell) => {
+    try {
+      return await fetch(`${GEMINI_API}/models/${encodeURIComponent(modell)}:generateContent?key=${encodeURIComponent(key)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      });
+    } catch {
+      throw new ExtraktionsFehler('Keine Verbindung zu Gemini. Ist das Handy online?');
+    }
+  };
+
+  let modell = settings.geminiModell || GEMINI_STANDARD;
+  let res = await anfrage(modell);
+  if (res.status === 404) {
+    const ersatz = await geminiModellSuchen(key);
+    if (ersatz) { modell = ersatz; res = await anfrage(modell); }
+  }
+  if (!res.ok) throw new ExtraktionsFehler(await geminiFehler(res));
+
+  const data = await res.json();
+  if (data.promptFeedback?.blockReason) throw new ExtraktionsFehler('Gemini hat die Anfrage abgelehnt.');
+  const kandidat = data.candidates?.[0];
+  if (kandidat?.finishReason === 'MAX_TOKENS') throw new ExtraktionsFehler('Die Antwort war zu lang und wurde abgeschnitten.');
+  const text = (kandidat?.content?.parts || []).map((p) => p.text || '').join('');
+  if (!text) throw new ExtraktionsFehler('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
+  return auswerten(text);
 }

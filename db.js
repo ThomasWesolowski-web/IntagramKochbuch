@@ -111,11 +111,13 @@ export const MODELLE = [
   { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (beste Qualität, etwa 10–20 Cent)' },
 ];
 
+const STANDARD = { anbieter: 'gemini', geminiKey: '', apiKey: '', modell: MODELLE[0].id };
+
 export function loadSettings() {
   try {
-    return { apiKey: '', modell: MODELLE[0].id, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
+    return { ...STANDARD, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
   } catch {
-    return { apiKey: '', modell: MODELLE[0].id };
+    return { ...STANDARD };
   }
 }
 

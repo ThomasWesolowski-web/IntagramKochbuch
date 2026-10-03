@@ -10,7 +10,7 @@ reines HTML/CSS/JavaScript ohne Build-Schritt, läuft über GitHub Pages und auc
 - Reel teilen (Android: Video in der Galerie teilen → *Kochbuch*) oder hier hochladen (iPhone und Android)
 - Beschreibung und Link des Posts einfügen; ein geteilter Text wird automatisch in Link und Beschreibung getrennt
 - Die App holt etwa alle 2,5 Sekunden ein Standbild aus dem Video (6 bis 16 Bilder, direkt im Browser)
-- Claude liest Standbilder (eingeblendeter Text, Untertitel, was man sieht) und Beschreibung und macht daraus ein Rezept:
+- Eine KI (Google Gemini kostenlos oder Claude) liest Standbilder (eingeblendeter Text, Untertitel, was man sieht) und Beschreibung und macht daraus ein Rezept:
   Titel, Portionen, Zeit, Zutaten mit Mengen (metrisch, geschätzte Mengen mit ≈ markiert), Schritte mit passendem Bild, Tipps, Schlagworte
 - Portionen umrechnen, Zutaten und Schritte beim Kochen abhaken, Kochmodus (Bildschirm bleibt an)
 - Suchen nach Rezept oder Zutat, Filtern nach Schlagwort
@@ -25,15 +25,18 @@ fehlen Details; dann hilft die Beschreibung.
 1. GitHub Pages einschalten: *Settings → Pages → Deploy from a branch → `main` / `(root)`*.
 2. Die Adresse `https://thomaswesolowski-web.github.io/IntagramKochbuch/` auf dem Handy öffnen
    und „Zum Home-Bildschirm“ wählen. Erst danach erscheint *Kochbuch* im Teilen-Menü (Android).
-3. Unter [console.anthropic.com](https://console.anthropic.com) einen API-Schlüssel anlegen und in der App
-   unter *Einstellungen* eintragen. Der Schlüssel bleibt nur auf dem Handy. Standardmodell ist Claude Sonnet 5.5,
-   ein Rezept kostet damit etwa 3 bis 5 Cent (Opus 5.5 in den Einstellungen: etwa 10 bis 20 Cent).
+3. Einen API-Schlüssel in der App unter *Einstellungen* eintragen. Er bleibt nur auf dem Handy.
+   - **Google Gemini (Standard, kostenlos):** Schlüssel unter [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+     anlegen. Es gibt ein Tageslimit, und im kostenlosen Kontingent darf Google die Anfragen zur Verbesserung nutzen.
+     Die App nimmt das aktuelle Flash-Modell (`gemini-flash-latest`, sonst das neueste verfügbare Flash-Modell).
+   - **Claude (kostenpflichtig):** Schlüssel unter [console.anthropic.com](https://console.anthropic.com) anlegen und
+     Guthaben aufladen. Mit Sonnet 5.5 kostet ein Rezept etwa 3 bis 5 Cent, mit Opus 5.5 etwa 10 bis 20 Cent.
 
 ## Dateien
 
 - `app.js`: Ansichten (Liste, Neu, Rezept, Bearbeiten, Einstellungen)
 - `video.js`: Standbilder aus dem Video
-- `extract.js`: Anfrage an Claude mit festem JSON-Schema
+- `extract.js`: Anfrage an Gemini oder Claude mit festem JSON-Schema
 - `db.js`: Speicher auf dem Gerät
 - `sw.js`: Offline-Cache und Empfang geteilter Reels
 - `vendor/anthropic-sdk.mjs`: Anthropic TypeScript SDK als eine Datei gebündelt

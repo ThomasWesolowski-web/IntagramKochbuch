@@ -1,12 +1,12 @@
-// Instagram Kochbuch: Reels teilen oder hochladen, Claude macht daraus ein Rezept.
+// Instagram Kochbuch: Reels teilen oder hochladen, eine KI (Gemini oder Claude) macht daraus ein Rezept.
 // Alles bleibt auf dem Handy (IndexedDB), nur die Standbilder und die Beschreibung
-// gehen zum Erkennen an die Claude API.
+// gehen zum Erkennen an den gewählten Anbieter.
 
 import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -385,7 +385,7 @@ async function renderNeu(params) {
         <input type="file" accept="video/*" class="file-input" id="video-input">
         <span id="drop-inhalt"></span>
       </label>
-      <p class="hint">Das Video bleibt auf dem Handy. Nur einzelne Standbilder gehen an Claude.</p>
+      <p class="hint">Das Video bleibt auf dem Handy. Nur einzelne Standbilder gehen zum Erkennen an die KI.</p>
     </section>
 
     <section class="section">
@@ -439,8 +439,8 @@ async function renderNeu(params) {
     fehler.innerHTML = '';
     const text = $('#beschreibung').value;
     const quelle = $('#link').value.trim();
-    if (!settings.apiKey) {
-      fehler.innerHTML = '<div class="err">Bitte zuerst in den <a href="#/einstellungen">Einstellungen</a> einen Claude API-Schlüssel eintragen.</div>';
+    if (!(settings.anbieter === 'claude' ? settings.apiKey : settings.geminiKey)) {
+      fehler.innerHTML = '<div class="err">Bitte zuerst in den <a href="#/einstellungen">Einstellungen</a> einen API-Schlüssel eintragen.</div>';
       return;
     }
     if (!video && !text.trim()) {
@@ -604,23 +604,52 @@ function renderEinstellungen() {
   kopf('Einstellungen');
   view.innerHTML = `
     <section class="section">
-      <h2>Claude</h2>
-      <label class="field"><span>API-Schlüssel</span>
-        <input id="s-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(settings.apiKey)}">
+      <h2>Rezepte erkennen mit</h2>
+      <label class="field"><span>Anbieter</span>
+        <select id="s-anbieter">
+          <option value="gemini" ${settings.anbieter !== 'claude' ? 'selected' : ''}>Google Gemini (kostenlos)</option>
+          <option value="claude" ${settings.anbieter === 'claude' ? 'selected' : ''}>Claude (kostenpflichtig)</option>
+        </select>
       </label>
-      <label class="field"><span>Modell</span>
-        <select id="s-modell">${db.MODELLE.map((m) => `<option value="${m.id}" ${m.id === settings.modell ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select>
-      </label>
-      <p class="hint">Den Schlüssel gibt es unter console.anthropic.com → API Keys. Er bleibt nur auf diesem Handy.
-        Die API wird extra abgerechnet (Guthaben unter Settings → Billing aufladen), 5 $ reichen für etwa 100 Rezepte.</p>
+      <div id="s-gemini">
+        <label class="field"><span>Gemini API-Schlüssel</span>
+          <input id="s-gkey" type="password" autocomplete="off" placeholder="AIza…" value="${esc(settings.geminiKey)}">
+        </label>
+        <p class="hint">Kostenlos unter <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> mit einem Google-Konto anlegen.
+          Im kostenlosen Kontingent darf Google die Anfragen zur Verbesserung seiner Dienste nutzen. Es gibt ein Tageslimit.</p>
+      </div>
+      <div id="s-claude">
+        <label class="field"><span>Claude API-Schlüssel</span>
+          <input id="s-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(settings.apiKey)}">
+        </label>
+        <label class="field"><span>Modell</span>
+          <select id="s-modell">${db.MODELLE.map((m) => `<option value="${m.id}" ${m.id === settings.modell ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select>
+        </label>
+        <p class="hint">Den Schlüssel gibt es unter console.anthropic.com → API Keys.
+          Die API wird extra abgerechnet (Guthaben unter Settings → Billing aufladen).</p>
+      </div>
+      <p class="hint">Schlüssel bleiben nur auf diesem Handy.</p>
       <div class="actions"><button class="btn primary" id="s-speichern">Speichern</button></div>
     </section>
     <section class="section">
       <h2>App</h2>
       <p class="hint" style="margin-top:0">Version ${APP_VERSION}. Rezepte und Bilder sind nur auf diesem Handy gespeichert.</p>
     </section>`;
+  const umschalten = () => {
+    const claude = $('#s-anbieter').value === 'claude';
+    $('#s-gemini').hidden = claude;
+    $('#s-claude').hidden = !claude;
+  };
+  umschalten();
+  $('#s-anbieter').addEventListener('change', umschalten);
   $('#s-speichern').addEventListener('click', () => {
-    settings = { ...settings, apiKey: $('#s-key').value.trim(), modell: $('#s-modell').value };
+    settings = {
+      ...settings,
+      anbieter: $('#s-anbieter').value,
+      geminiKey: $('#s-gkey').value.trim(),
+      apiKey: $('#s-key').value.trim(),
+      modell: $('#s-modell').value,
+    };
     db.saveSettings(settings);
     toast('Einstellungen gespeichert');
   });
