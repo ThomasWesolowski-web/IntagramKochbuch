@@ -23,7 +23,7 @@ fehlen Details; dann hilft die Beschreibung.
 ## Einrichten
 
 1. GitHub Pages einschalten: *Settings → Pages → Deploy from a branch → `main` / `(root)`*.
-2. Die Adresse `https://thomaswesolowski-web.github.io/Instagram-Kochbuch/` auf dem Handy öffnen
+2. Die Adresse `https://thomaswesolowski-web.github.io/IntagramKochbuch/` auf dem Handy öffnen
    und „Zum Home-Bildschirm“ wählen. Erst danach erscheint *Kochbuch* im Teilen-Menü (Android).
 3. Unter [console.anthropic.com](https://console.anthropic.com) einen API-Schlüssel anlegen und in der App
    unter *Einstellungen* eintragen. Der Schlüssel bleibt nur auf dem Handy. Ein Rezept kostet je nach
