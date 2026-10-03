@@ -6,7 +6,7 @@ import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -78,10 +78,11 @@ async function route() {
   window.scrollTo(0, 0);
 }
 
-function kopf(titel, { zurueck = false, rechts = '', klein = false, sub = '' } = {}) {
+// titelHtml nur mit festem Text aufrufen, er wird nicht maskiert
+function kopf(titel, { zurueck = false, rechts = '', klein = false, sub = '', titelHtml = '' } = {}) {
   appbar.innerHTML = `
     ${zurueck ? `<button class="icon-btn" id="btn-back" aria-label="Zurück">${ICON.back}</button>` : ''}
-    <h1 class="${klein ? 'small' : ''}">${esc(titel)}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</h1>
+    <h1 class="${klein ? 'small' : ''}">${titelHtml || esc(titel)}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</h1>
     ${rechts}`;
   $('#btn-back')?.addEventListener('click', () => (history.length > 1 ? history.back() : (location.hash = '#/')));
 }
@@ -94,8 +95,11 @@ function bildUrlFuer(r, bilderMap) {
 }
 
 async function renderListe() {
-  kopf('Kochbuch');
   const rezepte = await db.alleRezepte();
+  kopf('Kochbuch', {
+    titelHtml: rezepte.length ? 'Was kochen wir <mark>heute?</mark>' : '',
+    sub: rezepte.length ? `${rezepte.length} ${rezepte.length === 1 ? 'Rezept' : 'Rezepte'} im Kochbuch` : '',
+  });
   if (!rezepte.length) {
     view.innerHTML = `
       <div class="empty">
@@ -117,7 +121,7 @@ async function renderListe() {
   const alleTags = [...new Set(rezepte.flatMap((r) => r.tags || []))].sort((a, b) => a.localeCompare(b, 'de'));
   view.innerHTML = `
     <label class="search">${ICON.search}<input id="suche" type="search" placeholder="Rezept oder Zutat suchen" value="${esc(suche)}"></label>
-    ${alleTags.length ? `<div class="chips">${['', ...alleTags].map((t) => `<button class="chip ${t === tagFilter ? 'active' : ''}" data-tag="${esc(t)}">${t ? esc(t) : 'Alle'}</button>`).join('')}</div>` : ''}
+    ${alleTags.length ? `<div class="chips">${['', ...alleTags].map((t) => `<button class="chip ${t === tagFilter ? 'active' : ''}" data-tag="${esc(t)}">${t ? `${symbolFuer(TAG_SYMBOLE, t)} ${esc(t)}`.trim() : 'Alle'}</button>`).join('')}</div>` : ''}
     <div class="grid" id="grid"></div>`;
 
   const grid = $('#grid');
@@ -148,6 +152,32 @@ async function renderListe() {
     zeichnen();
   }));
 }
+
+// ---------- Bildchen für Zutaten und Schlagworte ----------
+
+// Reihenfolge zählt: das erste passende Stichwort gewinnt
+const SYMBOLE = [
+  [/basilikum|petersilie|koriander|schnittlauch|kräuter|minze|thymian|rosmarin|dill/, '🌿'],
+  [/knoblauch/, '🧄'], [/zwiebel|schalotte|lauch/, '🧅'], [/tomate/, '🍅'], [/kartoffel/, '🥔'], [/karotte|möhre|mohrrübe/, '🥕'],
+  [/paprika|chili|peperoni/, '🌶️'], [/gurke|zucchini/, '🥒'], [/brokkoli|spinat|salat|kohl/, '🥬'], [/pilz|champignon/, '🍄'],
+  [/avocado/, '🥑'], [/zitrone|limette/, '🍋'], [/apfel/, '🍎'], [/banane/, '🍌'], [/beere|kirsche/, '🍓'], [/mais/, '🌽'],
+  [/nudel|pasta|spaghetti|penne|lasagne/, '🍝'], [/reis/, '🍚'], [/brot|toast|brötchen/, '🍞'], [/mehl|backpulver|hefe/, '🌾'],
+  [/^(ei|eier|eigelb|eiweiß)(?=[\s,(]|$)/, '🥚'], [/sahne|milch|joghurt|quark|schmand/, '🥛'], [/käse|parmesan|mozzarella|feta/, '🧀'], [/^(?!.*nuss).*butter/, '🧈'],
+  [/hähnchen|huhn|pute|chicken/, '🍗'], [/hack|rind|schwein|steak|fleisch|speck|schinken/, '🥩'], [/lachs|fisch|thunfisch|garnele|shrimp/, '🐟'],
+  [/salz|pfeffer|gewürz|zimt|curry|kurkuma|kreuzkümmel|paprikapulver/, '🧂'], [/zucker|honig|sirup/, '🍯'], [/schokolade|kakao/, '🍫'],
+  [/(^|[^a-zäöüß])öl|öl$/, '🫒'], [/wasser|brühe|fond/, '💧'], [/wein|essig/, '🍷'], [/nuss|nüsse|mandel/, '🥜'], [/linse|bohne|kichererbse/, '🫘'],
+];
+const TAG_SYMBOLE = [
+  [/pasta|nudel/, '🍝'], [/salat/, '🥗'], [/frühstück/, '🥞'], [/kuchen|back|dessert|süß|nachtisch/, '🧁'], [/suppe|eintopf/, '🍲'],
+  [/curry|asiatisch|indisch/, '🍛'], [/vegan|vegetarisch|gemüse/, '🥦'], [/fleisch|grill/, '🥩'], [/hähnchen|huhn/, '🍗'],
+  [/fisch|meeresfrüchte/, '🐟'], [/pizza/, '🍕'], [/burger/, '🍔'], [/schnell|einfach/, '⚡'], [/gesund|leicht/, '🥑'], [/getränk|drink/, '🥤'],
+];
+function symbolFuer(liste, text) {
+  const t = String(text || '').toLowerCase().trim();
+  return liste.find(([re]) => re.test(t))?.[1] || '';
+}
+// Zutat: passendes Bildchen, sonst der erste Buchstabe
+const zutatSymbol = (name) => symbolFuer(SYMBOLE, name) || esc(String(name || '·').trim().charAt(0).toUpperCase() || '·');
 
 // ---------- Mengen ----------
 
@@ -219,7 +249,7 @@ async function renderRezept(id) {
   }
 
   view.innerHTML = `
-    ${hero ? `<div class="hero" style="background-image:url('${hero}')"></div>` : ''}
+    ${hero ? `<div class="hero" style="background-image:url('${hero}')"><span class="sticker">aus deinem Reel</span></div>` : ''}
     <h2 class="r-title">${esc(r.titel || 'Ohne Titel')}</h2>
     ${r.beschreibung ? `<p class="r-desc">${esc(r.beschreibung)}</p>` : ''}
     <div class="r-meta">
@@ -258,6 +288,7 @@ async function renderRezept(id) {
       ${g.name ? `<div class="zt-group">${esc(g.name)}</div>` : ''}
       ${g.liste.map((z) => `
         <div class="zt" data-i="${z.i}">
+          <span class="ic" aria-hidden="true">${zutatSymbol(z.name)}</span>
           <span class="m">${mengeText(z.menge, z.einheit, faktor)}${z.geschaetzt ? ' <span class="est" title="Menge geschätzt">≈</span>' : ''}</span>
           <span class="n">${esc(z.name)}${z.hinweis ? ` <small>${esc(z.hinweis)}</small>` : ''}</span>
         </div>`).join('')}`).join('') || '<p class="hint">Keine Zutaten erkannt.</p>';

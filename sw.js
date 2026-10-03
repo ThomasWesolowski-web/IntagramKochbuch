@@ -1,7 +1,7 @@
 // Offline-Betrieb: die App-Dateien kommen aus dem Cache und werden im
 // Hintergrund aktualisiert. Anfragen an Claude laufen nie über den Cache.
 // Außerdem nimmt der Service Worker geteilte Reels an (Teilen-Menü auf Android).
-const CACHE = 'kochbuch-v6';
+const CACHE = 'kochbuch-v7';
 const SHELL = [
   './',
   'index.html',
@@ -16,6 +16,8 @@ const SHELL = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
+  'fonts/fredoka.woff2',
+  'fonts/nunito.woff2',
 ];
 
 self.addEventListener('install', (event) => {
