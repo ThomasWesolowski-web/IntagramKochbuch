@@ -178,14 +178,15 @@ async function geminiFehler(res) {
   const msg = data.error?.message || '';
   if (res.status === 400 && /api key/i.test(msg)) return 'Der Gemini-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.';
   if (res.status === 403) return 'Der Gemini-Schlüssel darf diese Anfrage nicht stellen.';
-  if (res.status === 429) return 'Das kostenlose Gemini-Kontingent ist für heute oder diese Minute aufgebraucht. Bitte später erneut versuchen.';
+  if (res.status === 429) return 'Das kostenlose Gemini-Kontingent ist aufgebraucht, auch bei den Ausweichmodellen. Meist reicht es, eine Minute zu warten; das Tageslimit gilt bis etwa 9 Uhr morgens.';
   if (res.status === 503) return 'Gemini ist gerade überlastet, auch nach mehreren Versuchen. Bitte in ein paar Minuten erneut versuchen.';
   if (res.status >= 500) return `Gemini meldet einen Fehler (${res.status}). Bitte erneut versuchen.`;
   return `Gemini hat die Anfrage abgelehnt: ${msg || res.status}`;
 }
 
-// Ausweichmodelle, falls der Alias fehlt oder überlastet ist: erst Flash, dann Flash-Lite, neueste zuerst.
-async function geminiAusweichmodelle(key, ohne) {
+// Ausweichmodelle, falls der Alias fehlt, überlastet oder sein Kontingent leer ist.
+// Normal erst Flash, dann Flash-Lite; bei leerem Kontingent erst Flash-Lite (größeres Gratis-Kontingent).
+async function geminiAusweichmodelle(key, ohne, liteZuerst) {
   try {
     const res = await fetch(`${GEMINI_API}/models?pageSize=200&key=${encodeURIComponent(key)}`);
     if (!res.ok) return [];
@@ -195,7 +196,9 @@ async function geminiAusweichmodelle(key, ohne) {
       .map((m) => m.name.replace(/^models\//, ''))
       .filter((n) => /flash/.test(n) && !/image|tts|live|audio|preview|exp|thinking/.test(n) && n !== ohne)
       .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
-    return [...namen.filter((n) => !/lite/.test(n)), ...namen.filter((n) => /lite/.test(n))].slice(0, 2);
+    const flash = namen.filter((n) => !/lite/.test(n)).slice(0, 2);
+    const lite = namen.filter((n) => /lite/.test(n)).slice(0, 2);
+    return liteZuerst ? [...lite, ...flash] : [...flash, ...lite];
   } catch {
     return [];
   }
@@ -203,6 +206,15 @@ async function geminiAusweichmodelle(key, ohne) {
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 const UEBERLASTET = (status) => status === 500 || status === 503;
+const WECHSELN = (status) => status === 404 || status === 429 || UEBERLASTET(status);
+
+// Google nennt bei 429 oft, wann es wieder geht (RetryInfo, z. B. "37s").
+async function wartezeit(res) {
+  const data = await res.clone().json().catch(() => ({}));
+  const info = (data.error?.details || []).find((d) => d.retryDelay);
+  const s = info ? parseFloat(info.retryDelay) : NaN;
+  return Number.isFinite(s) ? s : null;
+}
 
 async function mitGemini(eingabe, settings, onStatus) {
   const key = settings.geminiKey;
@@ -247,11 +259,24 @@ async function mitGemini(eingabe, settings, onStatus) {
 
   const modell = settings.geminiModell || GEMINI_STANDARD;
   let res = await versuchen(modell, 3);
-  if (res.status === 404 || UEBERLASTET(res.status)) {
-    for (const ersatz of await geminiAusweichmodelle(key, modell)) {
+  if (WECHSELN(res.status)) {
+    const ersatzListe = await geminiAusweichmodelle(key, modell, res.status === 429);
+    for (const ersatz of ersatzListe) {
       onStatus(`Gemini versucht es mit ${ersatz} …`);
       const neu = await versuchen(ersatz, 2);
-      if (neu.ok || (neu.status !== 404 && !UEBERLASTET(neu.status))) { res = neu; break; }
+      res = neu.status === 404 && res.status !== 404 ? res : neu;
+      if (!WECHSELN(neu.status)) break;
+    }
+  }
+  // Kontingent pro Minute: kurz warten und ein letztes Mal versuchen
+  if (res.status === 429) {
+    const s = await wartezeit(res);
+    if (s != null && s <= 45) {
+      for (let rest = Math.ceil(s) + 1; rest > 0; rest--) {
+        onStatus(`Gratis-Limit pro Minute erreicht, neuer Versuch in ${rest} s …`);
+        await pause(1000);
+      }
+      res = await versuchen(modell, 1);
     }
   }
   if (!res.ok) throw new ExtraktionsFehler(await geminiFehler(res));

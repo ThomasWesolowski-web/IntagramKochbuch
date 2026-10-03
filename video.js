@@ -2,11 +2,11 @@
 // in ein <video>-Element geladen und an gleichmäßig verteilten Stellen auf ein
 // Canvas gezeichnet.
 
-const MAX_EDGE = 768;        // reicht, damit Claude Text im Bild lesen kann
+const MAX_EDGE = 640;        // reicht, um eingeblendeten Text zu lesen, und schont das Gratis-Kontingent
 const JPEG_QUALITY = 0.72;
 const MIN_FRAMES = 6;
-const MAX_FRAMES = 16;  // mehr Bilder kosten mehr, bringen aber selten mehr
-const ABSTAND_S = 2.5;       // etwa alle zweieinhalb Sekunden ein Bild
+const MAX_FRAMES = 12;  // mehr Bilder kosten mehr, bringen aber selten mehr
+const ABSTAND_S = 3;         // etwa alle drei Sekunden ein Bild
 
 function warte(el, event) {
   return new Promise((resolve, reject) => {

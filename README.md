@@ -9,7 +9,7 @@ reines HTML/CSS/JavaScript ohne Build-Schritt, läuft über GitHub Pages und auc
 
 - Reel teilen (Android: Video in der Galerie teilen → *Kochbuch*) oder hier hochladen (iPhone und Android)
 - Beschreibung und Link des Posts einfügen; ein geteilter Text wird automatisch in Link und Beschreibung getrennt
-- Die App holt etwa alle 2,5 Sekunden ein Standbild aus dem Video (6 bis 16 Bilder, direkt im Browser)
+- Die App holt etwa alle 3 Sekunden ein Standbild aus dem Video (6 bis 12 Bilder, direkt im Browser)
 - Eine KI (Google Gemini kostenlos oder Claude) liest Standbilder (eingeblendeter Text, Untertitel, was man sieht) und Beschreibung und macht daraus ein Rezept:
   Titel, Portionen, Zeit, Zutaten mit Mengen (metrisch, geschätzte Mengen mit ≈ markiert), Schritte mit passendem Bild, Tipps, Schlagworte
 - Portionen umrechnen, Zutaten und Schritte beim Kochen abhaken, Kochmodus (Bildschirm bleibt an)
