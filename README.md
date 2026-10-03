@@ -51,3 +51,13 @@ python3 -m http.server 8000
 ```
 
 Dann <http://localhost:8000> öffnen.
+
+## Testen
+
+```sh
+node tests/e2e.mjs
+```
+
+Spielt die App im Browser durch (Playwright, Chromium, ffmpeg nötig). Gemini, Groq und Claude werden nachgestellt,
+es braucht also keine Schlüssel. Für Claude Code liegen in `.claude/` eine Projektregel für den Service Worker,
+der Skill `app-testen` und der Agent `code-reviewer`; die Projektbeschreibung steht in `CLAUDE.md`.
