@@ -6,7 +6,7 @@ import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -44,6 +44,8 @@ function toast(msg, ms = 2600) {
 }
 
 const ICON = {
+  schloss: '<svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  offen: '<svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 10.5V8a4 4 0 0 1 7.6-1.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   back: '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   more: '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
@@ -638,6 +640,11 @@ function renderEinstellungen() {
   view.innerHTML = `
     <section class="section">
       <h2>Rezepte erkennen mit</h2>
+      <div class="sperre" id="s-sperre" hidden>
+        <span>${ICON.schloss}Gesperrt, damit nichts aus Versehen geändert wird.</span>
+        <button class="btn soft" id="s-entsperren">${ICON.offen}Entsperren</button>
+      </div>
+      <fieldset class="felder" id="s-felder">
       <label class="field"><span>Anbieter</span>
         <select id="s-anbieter">
           <option value="gemini" ${!['claude', 'groq'].includes(settings.anbieter) ? 'selected' : ''}>Google Gemini, Groq als Ersatz (kostenlos)</option>
@@ -669,8 +676,9 @@ function renderEinstellungen() {
         <p class="hint">Den Schlüssel gibt es unter console.anthropic.com → API Keys.
           Die API wird extra abgerechnet (Guthaben unter Settings → Billing aufladen).</p>
       </div>
+      </fieldset>
       <p class="hint">Schlüssel bleiben nur auf diesem Handy.</p>
-      <div class="actions"><button class="btn primary" id="s-speichern">Speichern</button></div>
+      <div class="actions" id="s-aktionen"><button class="btn primary" id="s-speichern">Speichern</button></div>
     </section>
     <section class="section">
       <h2>App</h2>
@@ -684,6 +692,16 @@ function renderEinstellungen() {
   };
   umschalten();
   $('#s-anbieter').addEventListener('change', umschalten);
+
+  // Sobald ein Schlüssel gespeichert ist, sind die Felder gesperrt und lassen sich erst nach einem Tipp ändern
+  const sperren = (zu) => {
+    $('#s-felder').disabled = zu;
+    $('#s-sperre').hidden = !zu;
+    $('#s-aktionen').hidden = zu;
+  };
+  sperren(Boolean(settings.geminiKey || settings.groqKey || settings.apiKey));
+  $('#s-entsperren').addEventListener('click', () => { sperren(false); $('#s-anbieter').focus(); });
+
   $('#s-speichern').addEventListener('click', () => {
     settings = {
       ...settings,
@@ -694,6 +712,7 @@ function renderEinstellungen() {
       modell: $('#s-modell').value,
     };
     db.saveSettings(settings);
+    if (settings.geminiKey || settings.groqKey || settings.apiKey) sperren(true);
     toast('Einstellungen gespeichert');
   });
 }

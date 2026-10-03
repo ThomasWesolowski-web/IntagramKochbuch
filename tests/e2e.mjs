@@ -112,6 +112,7 @@ async function neueSeite(optionen) {
 
 async function einstellen(page, werte) {
   await page.goto(`${BASE}#/einstellungen`);
+  if (await page.isVisible('#s-entsperren')) await page.click('#s-entsperren');
   await page.selectOption('#s-anbieter', werte.anbieter);
   for (const [sel, wert] of Object.entries(werte.felder || {})) await page.fill(sel, wert);
   await page.click('#s-speichern');
@@ -134,6 +135,10 @@ try {
     await page.goto(BASE);
     pruefe(await page.isVisible('.empty'), 'Leere Liste zeigt Hinweis');
     await einstellen(page, { anbieter: 'gemini', felder: { '#s-gkey': 'AIza-test' } });
+    await page.reload();
+    const gesperrt = await page.isDisabled('#s-gkey') && !(await page.isVisible('#s-speichern'));
+    await page.click('#s-entsperren');
+    pruefe(gesperrt && await page.isEnabled('#s-gkey') && await page.isVisible('#s-speichern'), 'Schlüssel gesperrt, Entsperren gibt sie frei');
     const f = await rezeptAnlegen(page);
     pruefe(!f, `Gemini: Rezept angelegt ${f ? `(Fehler: ${f})` : ''}`);
     pruefe((await page.textContent('.r-title').catch(() => '')) === 'Cremige Tomaten-Pasta', 'Rezeptansicht zeigt den Titel');
