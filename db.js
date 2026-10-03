@@ -107,8 +107,8 @@ export async function eingangLeeren() {
 // Einstellungen bleiben nur auf diesem Handy.
 const SETTINGS_KEY = 'kochbuch-einstellungen';
 export const MODELLE = [
-  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (beste Qualität)' },
-  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (günstiger, schneller)' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (günstig, etwa 3–5 Cent pro Rezept)' },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (beste Qualität, etwa 10–20 Cent)' },
 ];
 
 export function loadSettings() {

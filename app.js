@@ -612,7 +612,7 @@ function renderEinstellungen() {
         <select id="s-modell">${db.MODELLE.map((m) => `<option value="${m.id}" ${m.id === settings.modell ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select>
       </label>
       <p class="hint">Den Schlüssel gibt es unter console.anthropic.com → API Keys. Er bleibt nur auf diesem Handy.
-        Jedes erkannte Rezept kostet je nach Videolänge ein paar Cent.</p>
+        Die API wird extra abgerechnet (Guthaben unter Settings → Billing aufladen), 5 $ reichen für etwa 100 Rezepte.</p>
       <div class="actions"><button class="btn primary" id="s-speichern">Speichern</button></div>
     </section>
     <section class="section">

@@ -9,7 +9,7 @@ reines HTML/CSS/JavaScript ohne Build-Schritt, läuft über GitHub Pages und auc
 
 - Reel teilen (Android: Video in der Galerie teilen → *Kochbuch*) oder hier hochladen (iPhone und Android)
 - Beschreibung und Link des Posts einfügen; ein geteilter Text wird automatisch in Link und Beschreibung getrennt
-- Die App holt etwa alle 1,5 Sekunden ein Standbild aus dem Video (8 bis 32 Bilder, direkt im Browser)
+- Die App holt etwa alle 2,5 Sekunden ein Standbild aus dem Video (6 bis 16 Bilder, direkt im Browser)
 - Claude liest Standbilder (eingeblendeter Text, Untertitel, was man sieht) und Beschreibung und macht daraus ein Rezept:
   Titel, Portionen, Zeit, Zutaten mit Mengen (metrisch, geschätzte Mengen mit ≈ markiert), Schritte mit passendem Bild, Tipps, Schlagworte
 - Portionen umrechnen, Zutaten und Schritte beim Kochen abhaken, Kochmodus (Bildschirm bleibt an)
@@ -26,8 +26,8 @@ fehlen Details; dann hilft die Beschreibung.
 2. Die Adresse `https://thomaswesolowski-web.github.io/IntagramKochbuch/` auf dem Handy öffnen
    und „Zum Home-Bildschirm“ wählen. Erst danach erscheint *Kochbuch* im Teilen-Menü (Android).
 3. Unter [console.anthropic.com](https://console.anthropic.com) einen API-Schlüssel anlegen und in der App
-   unter *Einstellungen* eintragen. Der Schlüssel bleibt nur auf dem Handy. Ein Rezept kostet je nach
-   Videolänge ein paar Cent.
+   unter *Einstellungen* eintragen. Der Schlüssel bleibt nur auf dem Handy. Standardmodell ist Claude Sonnet 5.5,
+   ein Rezept kostet damit etwa 3 bis 5 Cent (Opus 5.5 in den Einstellungen: etwa 10 bis 20 Cent).
 
 ## Dateien
 

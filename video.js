@@ -4,9 +4,9 @@
 
 const MAX_EDGE = 768;        // reicht, damit Claude Text im Bild lesen kann
 const JPEG_QUALITY = 0.72;
-const MIN_FRAMES = 8;
-const MAX_FRAMES = 32;
-const ABSTAND_S = 1.5;       // etwa alle anderthalb Sekunden ein Bild
+const MIN_FRAMES = 6;
+const MAX_FRAMES = 16;  // mehr Bilder kosten mehr, bringen aber selten mehr
+const ABSTAND_S = 2.5;       // etwa alle zweieinhalb Sekunden ein Bild
 
 function warte(el, event) {
   return new Promise((resolve, reject) => {
