@@ -179,22 +179,30 @@ async function geminiFehler(res) {
   if (res.status === 400 && /api key/i.test(msg)) return 'Der Gemini-Schlüssel ist ungültig. Bitte in den Einstellungen prüfen.';
   if (res.status === 403) return 'Der Gemini-Schlüssel darf diese Anfrage nicht stellen.';
   if (res.status === 429) return 'Das kostenlose Gemini-Kontingent ist für heute oder diese Minute aufgebraucht. Bitte später erneut versuchen.';
+  if (res.status === 503) return 'Gemini ist gerade überlastet, auch nach mehreren Versuchen. Bitte in ein paar Minuten erneut versuchen.';
   if (res.status >= 500) return `Gemini meldet einen Fehler (${res.status}). Bitte erneut versuchen.`;
   return `Gemini hat die Anfrage abgelehnt: ${msg || res.status}`;
 }
 
-// Falls der Alias einmal nicht mehr existiert: ein verfügbares Flash-Modell suchen.
-async function geminiModellSuchen(key) {
-  const res = await fetch(`${GEMINI_API}/models?pageSize=200&key=${encodeURIComponent(key)}`);
-  if (!res.ok) return null;
-  const { models = [] } = await res.json();
-  const flash = models
-    .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
-    .map((m) => m.name.replace(/^models\//, ''))
-    .filter((n) => /flash/.test(n) && !/lite|image|tts|live|audio|preview|exp/.test(n))
-    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
-  return flash[0] || null;
+// Ausweichmodelle, falls der Alias fehlt oder überlastet ist: erst Flash, dann Flash-Lite, neueste zuerst.
+async function geminiAusweichmodelle(key, ohne) {
+  try {
+    const res = await fetch(`${GEMINI_API}/models?pageSize=200&key=${encodeURIComponent(key)}`);
+    if (!res.ok) return [];
+    const { models = [] } = await res.json();
+    const namen = models
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => m.name.replace(/^models\//, ''))
+      .filter((n) => /flash/.test(n) && !/image|tts|live|audio|preview|exp|thinking/.test(n) && n !== ohne)
+      .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
+    return [...namen.filter((n) => !/lite/.test(n)), ...namen.filter((n) => /lite/.test(n))].slice(0, 2);
+  } catch {
+    return [];
+  }
 }
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const UEBERLASTET = (status) => status === 500 || status === 503;
 
 async function mitGemini(eingabe, settings, onStatus) {
   const key = settings.geminiKey;
@@ -223,11 +231,28 @@ async function mitGemini(eingabe, settings, onStatus) {
     }
   };
 
-  let modell = settings.geminiModell || GEMINI_STANDARD;
-  let res = await anfrage(modell);
-  if (res.status === 404) {
-    const ersatz = await geminiModellSuchen(key);
-    if (ersatz) { modell = ersatz; res = await anfrage(modell); }
+  // Bei Überlastung (503) bis zu drei Versuche mit Pause, danach ein anderes Flash-Modell.
+  const versuchen = async (modell, versuche) => {
+    let res;
+    for (let i = 0; i < versuche; i++) {
+      if (i > 0) {
+        onStatus(`Gemini ist überlastet, neuer Versuch (${i + 1}/${versuche}) …`);
+        await pause(i * 3000);
+      }
+      res = await anfrage(modell);
+      if (!UEBERLASTET(res.status)) break;
+    }
+    return res;
+  };
+
+  const modell = settings.geminiModell || GEMINI_STANDARD;
+  let res = await versuchen(modell, 3);
+  if (res.status === 404 || UEBERLASTET(res.status)) {
+    for (const ersatz of await geminiAusweichmodelle(key, modell)) {
+      onStatus(`Gemini versucht es mit ${ersatz} …`);
+      const neu = await versuchen(ersatz, 2);
+      if (neu.ok || (neu.status !== 404 && !UEBERLASTET(neu.status))) { res = neu; break; }
+    }
   }
   if (!res.ok) throw new ExtraktionsFehler(await geminiFehler(res));
 
