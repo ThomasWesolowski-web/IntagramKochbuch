@@ -1,12 +1,12 @@
 // Instagram Kochbuch: Reels teilen oder hochladen, eine KI (Gemini, Groq oder Claude) macht daraus ein Rezept.
-// Alles bleibt auf dem Handy (IndexedDB), nur die Standbilder und die Beschreibung
-// gehen zum Erkennen an den gewählten Anbieter.
+// Alles bleibt auf dem Handy (IndexedDB). Zum Erkennen gehen Video (Gemini) oder Standbilder (Groq, Claude)
+// und die Beschreibung an den gewählten Anbieter.
 
 import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.5.1';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -245,6 +245,7 @@ async function renderRezept(id) {
     zurueck: true,
     klein: true,
     rechts: `
+      <button class="icon-btn" id="btn-edit" aria-label="Rezept bearbeiten">${ICON.edit}</button>
       <button class="icon-btn" id="btn-koch" aria-label="Kochmodus: Bildschirm bleibt an">${ICON.flame}</button>
       <button class="icon-btn" id="btn-more" aria-label="Mehr">${ICON.more}</button>`,
   });
@@ -285,6 +286,8 @@ async function renderRezept(id) {
 
     ${r.hinweise ? `<section class="section"><h2>Tipps</h2><div class="note">${esc(r.hinweise)}</div></section>` : ''}
 
+    <button class="btn ghost block" id="btn-korrigieren">${ICON.edit} Stimmt etwas nicht? Rezept bearbeiten</button>
+
     ${r.abschrift ? `<section class="section"><details class="abschrift"><summary>Was die KI gelesen und gehört hat</summary><p>${esc(r.abschrift)}</p></details></section>` : ''}
 
     <section class="section">
@@ -314,9 +317,12 @@ async function renderRezept(id) {
   $$('.steps li').forEach((li) => li.querySelector('.st').addEventListener('click', () => li.classList.toggle('done')));
   $$('.steps img').forEach((img) => img.addEventListener('click', () => lightbox(img.src)));
 
+  const bearbeiten = () => { location.hash = `#/rezept/${id}/bearbeiten`; };
+  $('#btn-edit').addEventListener('click', bearbeiten);
+  $('#btn-korrigieren').addEventListener('click', bearbeiten);
   $('#btn-koch').addEventListener('click', kochmodusUmschalten);
   $('#btn-more').addEventListener('click', () => openMenu([
-    { icon: ICON.edit, label: 'Bearbeiten', run: () => { location.hash = `#/rezept/${id}/bearbeiten`; } },
+    { icon: ICON.edit, label: 'Bearbeiten', run: bearbeiten },
     { icon: ICON.share, label: 'Als Text teilen', run: () => rezeptTeilen(r) },
     { icon: ICON.trash, label: 'Löschen', danger: true, run: async () => {
       if (!confirm(`„${r.titel}“ wirklich löschen?`)) return;
@@ -515,7 +521,7 @@ async function renderNeu(params) {
       balken(0.95);
       status('Rezept speichern …');
       // Mit Video liefert Gemini Zeitpunkte, die Bilder dazu sind dann genauer als die Standbilder
-      const id = await rezeptSpeichern(daten, daten.bilder || bilder, quelle, text);
+      const id = await rezeptSpeichern(daten, daten.bilder?.length ? daten.bilder : bilder, quelle, text);
       balken(1);
       toast('Rezept gespeichert');
       location.hash = `#/rezept/${id}`;

@@ -170,7 +170,9 @@ try {
     if (SHOTS) await page.screenshot({ path: path.join(OUT, 'rezept.png'), fullPage: true });
 
     const id = page.url().split('/')[5];
-    await page.goto(`${BASE}#/rezept/${id}/bearbeiten`);
+    await page.click('#btn-korrigieren');
+    await page.waitForURL(/bearbeiten$/);
+    pruefe(true, 'Knopf „Rezept bearbeiten“ öffnet die Bearbeitung');
     pruefe((await page.inputValue('#e-zutaten')).includes('2–3 EL Olivenöl'), 'Bereich steht beim Bearbeiten im Text');
     await page.fill('#e-zutaten', `${await page.inputValue('#e-zutaten')}\n1-2 Zehen Knoblauch, gehackt`);
     await page.fill('#e-titel', 'Pasta neu');

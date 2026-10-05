@@ -394,7 +394,10 @@ async function geminiHochladen(file, mimeType, key, onStatus) {
     if (!r.ok) break;
     datei = await r.json();
   }
-  if (!datei?.uri || datei.state !== 'ACTIVE') throw new Error('Video konnte nicht vorbereitet werden');
+  if (!datei?.uri || datei.state !== 'ACTIVE') {
+    if (datei?.name) fetch(`${GEMINI_API}/${datei.name}?key=${encodeURIComponent(key)}`, { method: 'DELETE' }).catch(() => {});
+    throw new Error('Video konnte nicht vorbereitet werden');
+  }
   return datei;
 }
 
