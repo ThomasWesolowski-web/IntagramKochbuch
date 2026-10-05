@@ -29,6 +29,10 @@ if (!fs.existsSync(VIDEO)) {
   execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=duration=20:size=540x960:rate=12',
     '-c:v', 'libvpx-vp9', '-b:v', '200k', VIDEO]);
 }
+// Über 14 MB: geht nicht mehr direkt in die Anfrage, sondern über die Datei-Schnittstelle.
+// Angehängte Nullen ignoriert der Player.
+const GROSS = path.join(OUT, 'reel-gross.webm');
+if (!fs.existsSync(GROSS)) fs.writeFileSync(GROSS, Buffer.concat([fs.readFileSync(VIDEO), Buffer.alloc(15 * 1024 * 1024)]));
 
 // ---------- Statischer Server ----------
 const TYPEN = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -45,14 +49,15 @@ const BASE = `http://localhost:${server.address().port}/`;
 
 // ---------- Nachgestellte Antworten ----------
 const REZEPT = {
-  ist_rezept: true, titel: 'Cremige Tomaten-Pasta', beschreibung: 'Schnelle Pasta.', portionen: 2, zubereitungszeit: '20 Min.',
+  abschrift: '0:02 „200 Gramm Nudeln“ · Beschreibung: 1 Dose Tomaten, 2-3 EL Öl', ist_rezept: true, titel: 'Cremige Tomaten-Pasta', beschreibung: 'Schnelle Pasta.', portionen: 2, zubereitungszeit: '20 Min.',
   zutaten: [
     { gruppe: '', menge: 200, einheit: 'g', name: 'Nudeln', hinweis: '', geschaetzt: false },
     { gruppe: 'Soße', menge: 1, einheit: 'Dose', name: 'Tomaten', hinweis: 'gehackt', geschaetzt: false },
-    { gruppe: 'Soße', menge: 0.5, einheit: 'TL', name: 'Salz', hinweis: '', geschaetzt: true },
+    { gruppe: 'Soße', menge: '1/2', einheit: 'TL', name: 'Salz', hinweis: '', geschaetzt: true },
+    { gruppe: 'Soße', menge: 2, menge_bis: 3, einheit: 'EL', name: 'Olivenöl', hinweis: '', geschaetzt: false },
   ],
-  schritte: [{ text: 'Nudeln kochen.', bild: 2 }, { text: 'Soße aufkochen.', bild: 4 }, { text: 'Mischen.', bild: null }],
-  titelbild: 6, tags: ['Pasta'], hinweise: 'Nudelwasser aufheben.',
+  schritte: [{ text: 'Nudeln kochen.', bild: 2, zeit_s: 3.5 }, { text: 'Soße aufkochen.', bild: 4, zeit_s: 9 }, { text: 'Mischen.', bild: null, zeit_s: null }],
+  titelbild: 6, titelbild_zeit_s: 18, tags: ['Pasta'], hinweise: 'Nudelwasser aufheben.',
 };
 const CORS = { 'access-control-allow-origin': '*', 'content-type': 'application/json' };
 const json = (status, body) => ({ status, headers: CORS, body: JSON.stringify(body) });
@@ -68,18 +73,33 @@ function claudeSse(text) {
 }
 
 // gemini: 'ok' | 'ueberlastet' (503 beim Alias, dann Ausweichmodell) | 'kaputt' (alles 429)
+//         | 'ohneVideo' (lehnt das Video mit 400 ab, Standbilder gehen)
 async function anbieterNachstellen(page, { gemini = 'ok' } = {}) {
-  const log = { gemini: [], groq: null, claude: null };
+  const log = { gemini: [], geminiTeile: [], upload: [], groq: null, claude: null };
   await page.route('https://generativelanguage.googleapis.com/**', (route) => {
-    const u = route.request().url();
+    const req = route.request();
+    const u = req.url();
+    if (u.includes('/upload/')) {
+      log.upload.push('hochladen');
+      return route.fulfill(json(200, { file: { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', mimeType: 'video/webm', state: 'PROCESSING' } }));
+    }
+    if (u.includes('/files/abc')) {
+      log.upload.push(req.method());
+      return route.fulfill(json(200, req.method() === 'DELETE' ? {} : { name: 'files/abc', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc', mimeType: 'video/webm', state: 'ACTIVE' }));
+    }
     log.gemini.push(u.split('?')[0].split('/').pop());
     if (u.includes('/models?')) {
       return route.fulfill(json(200, { models: [
         { name: 'models/gemini-9-flash', supportedGenerationMethods: ['generateContent'] },
         { name: 'models/gemini-9-flash-lite', supportedGenerationMethods: ['generateContent'] }] }));
     }
+    const teile = JSON.parse(req.postData()).contents[0].parts;
+    const art = teile.some((t) => t.fileData) ? 'datei' : teile.some((t) => /^video\//.test(t.inlineData?.mimeType)) ? 'video'
+      : teile.some((t) => t.inlineData) ? 'bilder' : 'text';
+    log.geminiTeile.push(art);
     if (gemini === 'kaputt') return route.fulfill(json(429, { error: { message: 'quota' } }));
     if (gemini === 'ueberlastet' && u.includes('flash-latest')) return route.fulfill(json(503, { error: { message: 'overloaded' } }));
+    if (gemini === 'ohneVideo' && art === 'video') return route.fulfill(json(400, { error: { message: 'Unsupported MIME type' } }));
     return route.fulfill(json(200, { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(REZEPT) }] } }] }));
   });
   await page.route('https://api.groq.com/**', (route) => {
@@ -117,9 +137,9 @@ async function einstellen(page, werte) {
   await page.click('#s-speichern');
 }
 
-async function rezeptAnlegen(page, { video = true } = {}) {
+async function rezeptAnlegen(page, { video = true, datei = VIDEO } = {}) {
   await page.goto(`${BASE}#/neu`);
-  if (video) await page.setInputFiles('#video-input', VIDEO);
+  if (video) await page.setInputFiles('#video-input', datei);
   await page.fill('#beschreibung', 'Pasta! 200g Nudeln, 1 Dose Tomaten');
   await page.fill('#link', 'Schau https://www.instagram.com/reel/ABC/?igsh=1');
   await page.click('#los');
@@ -137,18 +157,30 @@ try {
     const f = await rezeptAnlegen(page);
     pruefe(!f, `Gemini: Rezept angelegt ${f ? `(Fehler: ${f})` : ''}`);
     pruefe((await page.textContent('.r-title').catch(() => '')) === 'Cremige Tomaten-Pasta', 'Rezeptansicht zeigt den Titel');
-    pruefe((await page.$$('.steps img')).length === 2, 'Zwei Schritte haben ein Bild aus dem Video');
+    pruefe(log.geminiTeile.join() === 'video', `Gemini bekommt das Video selbst (${log.geminiTeile.join()})`);
+    pruefe((await page.$$('.steps img')).length === 2, 'Zwei Schritte haben ein Bild an der genannten Stelle im Video');
+    pruefe(await page.isVisible('.hero'), 'Titelbild ist da');
+    let mengen = await page.$$eval('.zt .m', (els) => els.map((e) => e.textContent.trim()));
+    pruefe(mengen[2].startsWith('½ TL') && mengen[3] === '2–3 EL', `Bruch als Text und Bereich lesen (${mengen.join(' | ')})`);
     await page.click('#p-plus'); await page.click('#p-plus');
-    const mengen = await page.$$eval('.zt .m', (els) => els.map((e) => e.textContent.trim()));
-    pruefe(mengen[0] === '400 g' && mengen[2].startsWith('1 TL'), `Portionen umrechnen (${mengen.join(' | ')})`);
+    mengen = await page.$$eval('.zt .m', (els) => els.map((e) => e.textContent.trim()));
+    pruefe(mengen[0] === '400 g' && mengen[2].startsWith('1 TL') && mengen[3] === '4–6 EL', `Portionen umrechnen (${mengen.join(' | ')})`);
+    await page.click('.abschrift summary');
+    pruefe((await page.textContent('.abschrift p')).includes('200 Gramm Nudeln'), 'Abschrift ist aufklappbar');
     if (SHOTS) await page.screenshot({ path: path.join(OUT, 'rezept.png'), fullPage: true });
 
     const id = page.url().split('/')[5];
-    await page.goto(`${BASE}#/rezept/${id}/bearbeiten`);
+    await page.click('#btn-korrigieren');
+    await page.waitForURL(/bearbeiten$/);
+    pruefe(true, 'Knopf „Rezept bearbeiten“ öffnet die Bearbeitung');
+    pruefe((await page.inputValue('#e-zutaten')).includes('2–3 EL Olivenöl'), 'Bereich steht beim Bearbeiten im Text');
+    await page.fill('#e-zutaten', `${await page.inputValue('#e-zutaten')}\n1-2 Zehen Knoblauch, gehackt`);
     await page.fill('#e-titel', 'Pasta neu');
     await page.click('#e-speichern');
     await page.waitForTimeout(300);
     pruefe((await page.textContent('.r-title')) === 'Pasta neu', 'Bearbeiten speichert den Titel');
+    const knoblauch = await page.$$eval('.zt .m', (els) => els.at(-1).textContent.trim());
+    pruefe(knoblauch === '1–2 Zehen', `Neue Zutat mit Bereich (${knoblauch})`);
 
     await page.goto(BASE);
     await page.waitForTimeout(300);
@@ -166,6 +198,27 @@ try {
     await einstellen(page, { anbieter: 'gemini', felder: { '#s-gkey': 'AIza-test' } });
     const f = await rezeptAnlegen(page, { video: false });
     pruefe(!f && log.gemini.includes('gemini-9-flash:generateContent'), `Gemini 503: weicht auf anderes Modell aus ${f}`);
+    await ctx.close();
+  }
+
+  // 2b. Gemini lehnt das Video ab → Standbilder
+  {
+    const { page, log, ctx } = await neueSeite({ gemini: 'ohneVideo' });
+    await einstellen(page, { anbieter: 'gemini', felder: { '#s-gkey': 'AIza-test' } });
+    const f = await rezeptAnlegen(page);
+    const bilder = (await page.$$('.steps img')).length;
+    pruefe(!f && log.geminiTeile.join() === 'video,bilder' && bilder === 2, `Gemini ohne Video: nimmt die Standbilder (${log.geminiTeile.join()}, ${bilder} Bilder) ${f}`);
+    await ctx.close();
+  }
+
+  // 2c. Großes Video → Datei-Schnittstelle, danach wieder gelöscht
+  {
+    const { page, log, ctx } = await neueSeite();
+    await einstellen(page, { anbieter: 'gemini', felder: { '#s-gkey': 'AIza-test' } });
+    const f = await rezeptAnlegen(page, { datei: GROSS });
+    await page.waitForTimeout(300);
+    pruefe(!f && log.geminiTeile.join() === 'datei' && log.upload.join() === 'hochladen,GET,DELETE',
+      `Großes Video wird hochgeladen (${log.upload.join()} / ${log.geminiTeile.join()}) ${f}`);
     await ctx.close();
   }
 

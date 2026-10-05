@@ -1,12 +1,12 @@
 // Instagram Kochbuch: Reels teilen oder hochladen, eine KI (Gemini, Groq oder Claude) macht daraus ein Rezept.
-// Alles bleibt auf dem Handy (IndexedDB), nur die Standbilder und die Beschreibung
-// gehen zum Erkennen an den gewählten Anbieter.
+// Alles bleibt auf dem Handy (IndexedDB). Zum Erkennen gehen Video (Gemini) oder Standbilder (Groq, Claude)
+// und die Beschreibung an den gewählten Anbieter.
 
 import * as db from './db.js';
 import { standbilder } from './video.js';
 import { rezeptErkennen } from './extract.js';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.1';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -183,19 +183,22 @@ const zutatSymbol = (name) => symbolFuer(SYMBOLE, name) || esc(String(name || '�
 
 const BRUECHE = [[0.25, '¼'], [0.5, '½'], [0.75, '¾'], [1 / 3, '⅓'], [2 / 3, '⅔']];
 
-function mengeText(menge, einheit, faktor) {
+function zahlText(m, einheit) {
+  if (/^(g|ml)$/i.test(einheit) && m >= 100) return String(Math.round(m / 5) * 5);
+  if (m >= 10) return String(Math.round(m));
+  const ganz = Math.floor(m);
+  const rest = m - ganz;
+  const bruch = BRUECHE.find(([w]) => Math.abs(rest - w) < 0.04);
+  if (bruch && !/^(g|ml|kg|l)$/i.test(einheit)) return `${ganz || ''}${bruch[1]}`;
+  if (rest > 0.96) return String(ganz + 1);
+  return (Math.round(m * 10) / 10).toLocaleString('de-DE');
+}
+
+// menge_bis für Bereiche wie „2–3 EL“
+function mengeText(menge, einheit, faktor, bis = null) {
   if (menge == null) return einheit ? esc(einheit) : '';
-  let m = menge * faktor;
-  let zahl;
-  if (/^(g|ml)$/i.test(einheit) && m >= 100) zahl = String(Math.round(m / 5) * 5);
-  else if (m >= 10) zahl = String(Math.round(m));
-  else {
-    const ganz = Math.floor(m);
-    const rest = m - ganz;
-    const bruch = BRUECHE.find(([w]) => Math.abs(rest - w) < 0.04);
-    if (bruch && !/^(g|ml|kg|l)$/i.test(einheit)) zahl = `${ganz || ''}${bruch[1]}`;
-    else zahl = (Math.round(m * 10) / 10).toLocaleString('de-DE');
-  }
+  const von = zahlText(menge * faktor, einheit);
+  const zahl = bis > menge ? `${von}–${zahlText(bis * faktor, einheit)}` : von;
   return esc(`${zahl} ${einheit || ''}`.trim());
 }
 
@@ -204,22 +207,29 @@ const EINHEITEN = ['g', 'kg', 'ml', 'l', 'cl', 'EL', 'TL', 'Stück', 'Stk.', 'Pr
 function zutatParsen(zeile) {
   let rest = zeile.trim();
   let menge = null;
-  const zahl = /^(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)?|[½¼¾⅓⅔])\s*/.exec(rest);
-  if (zahl) {
-    const t = zahl[1].replace(',', '.');
+  let mengeBis = null;
+  const ZAHL = '(?:\\d+(?:[.,]\\d+)?(?:\\s*\\/\\s*\\d+)?|[½¼¾⅓⅔])';
+  const lesen = (t) => {
+    t = t.replace(',', '.').replace(/\s/g, '');
     const unicode = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3 };
-    menge = unicode[t] ?? (t.includes('/') ? t.split('/').map(Number).reduce((a, b) => a / b) : Number(t));
+    return unicode[t] ?? (t.includes('/') ? t.split('/').map(Number).reduce((a, b) => a / b) : Number(t));
+  };
+  const zahl = new RegExp(`^(${ZAHL})(?:\\s*[-–]\\s*(${ZAHL}))?\\s*`).exec(rest);
+  if (zahl) {
+    menge = lesen(zahl[1]);
+    if (zahl[2] && lesen(zahl[2]) > menge) mengeBis = lesen(zahl[2]);
     rest = rest.slice(zahl[0].length);
   }
   let einheit = '';
   const e = EINHEITEN.find((x) => rest.toLowerCase().startsWith(x.toLowerCase() + ' '));
   if (e) { einheit = e; rest = rest.slice(e.length).trim(); }
   const [name, ...hinweis] = rest.split(',');
-  return { gruppe: '', menge, einheit, name: name.trim(), hinweis: hinweis.join(',').trim(), geschaetzt: false };
+  return { gruppe: '', menge, menge_bis: mengeBis, einheit, name: name.trim(), hinweis: hinweis.join(',').trim(), geschaetzt: false };
 }
 
 function zutatAlsZeile(z) {
-  const m = z.menge == null ? '' : String(Math.round(z.menge * 100) / 100).replace('.', ',');
+  const zahl = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
+  const m = z.menge == null ? '' : zahl(z.menge) + (z.menge_bis > z.menge ? `–${zahl(z.menge_bis)}` : '');
   return [m, z.einheit, z.name].filter(Boolean).join(' ') + (z.hinweis ? `, ${z.hinweis}` : '');
 }
 
@@ -235,6 +245,7 @@ async function renderRezept(id) {
     zurueck: true,
     klein: true,
     rechts: `
+      <button class="icon-btn" id="btn-edit" aria-label="Rezept bearbeiten">${ICON.edit}</button>
       <button class="icon-btn" id="btn-koch" aria-label="Kochmodus: Bildschirm bleibt an">${ICON.flame}</button>
       <button class="icon-btn" id="btn-more" aria-label="Mehr">${ICON.more}</button>`,
   });
@@ -275,6 +286,10 @@ async function renderRezept(id) {
 
     ${r.hinweise ? `<section class="section"><h2>Tipps</h2><div class="note">${esc(r.hinweise)}</div></section>` : ''}
 
+    <button class="btn ghost block" id="btn-korrigieren">${ICON.edit} Stimmt etwas nicht? Rezept bearbeiten</button>
+
+    ${r.abschrift ? `<section class="section"><details class="abschrift"><summary>Was die KI gelesen und gehört hat</summary><p>${esc(r.abschrift)}</p></details></section>` : ''}
+
     <section class="section">
       <h2>Quelle</h2>
       ${r.quelle ? `<a class="src" href="${esc(r.quelle)}" target="_blank" rel="noopener">${ICON.link}${esc(r.quelle)}</a>` : '<p class="hint">Kein Link gespeichert.</p>'}
@@ -289,7 +304,7 @@ async function renderRezept(id) {
       ${g.liste.map((z) => `
         <div class="zt" data-i="${z.i}">
           <span class="ic" aria-hidden="true">${zutatSymbol(z.name)}</span>
-          <span class="m">${mengeText(z.menge, z.einheit, faktor)}${z.geschaetzt ? ' <span class="est" title="Menge geschätzt">≈</span>' : ''}</span>
+          <span class="m">${mengeText(z.menge, z.einheit, faktor, z.menge_bis)}${z.geschaetzt ? ' <span class="est" title="Menge geschätzt">≈</span>' : ''}</span>
           <span class="n">${esc(z.name)}${z.hinweis ? ` <small>${esc(z.hinweis)}</small>` : ''}</span>
         </div>`).join('')}`).join('') || '<p class="hint">Keine Zutaten erkannt.</p>';
   };
@@ -302,9 +317,12 @@ async function renderRezept(id) {
   $$('.steps li').forEach((li) => li.querySelector('.st').addEventListener('click', () => li.classList.toggle('done')));
   $$('.steps img').forEach((img) => img.addEventListener('click', () => lightbox(img.src)));
 
+  const bearbeiten = () => { location.hash = `#/rezept/${id}/bearbeiten`; };
+  $('#btn-edit').addEventListener('click', bearbeiten);
+  $('#btn-korrigieren').addEventListener('click', bearbeiten);
   $('#btn-koch').addEventListener('click', kochmodusUmschalten);
   $('#btn-more').addEventListener('click', () => openMenu([
-    { icon: ICON.edit, label: 'Bearbeiten', run: () => { location.hash = `#/rezept/${id}/bearbeiten`; } },
+    { icon: ICON.edit, label: 'Bearbeiten', run: bearbeiten },
     { icon: ICON.share, label: 'Als Text teilen', run: () => rezeptTeilen(r) },
     { icon: ICON.trash, label: 'Löschen', danger: true, run: async () => {
       if (!confirm(`„${r.titel}“ wirklich löschen?`)) return;
@@ -416,7 +434,9 @@ async function renderNeu(params) {
         <input type="file" accept="video/*" class="file-input" id="video-input">
         <span id="drop-inhalt"></span>
       </label>
-      <p class="hint">Das Video bleibt auf dem Handy. Nur einzelne Standbilder gehen zum Erkennen an die KI.</p>
+      <p class="hint">${settings.anbieter === 'gemini'
+        ? 'Zum Erkennen geht das Video mit Ton an Gemini, so werden auch gesprochene Mengen erfasst. Gespeichert wird es nur hier auf dem Handy.'
+        : 'Das Video bleibt auf dem Handy. Nur einzelne Standbilder gehen zum Erkennen an die KI.'}</p>
     </section>
 
     <section class="section">
@@ -488,15 +508,20 @@ async function renderNeu(params) {
       let bilder = [];
       if (video) {
         status('Standbilder aus dem Video holen …');
-        const ergebnis = await standbilder(video, (p) => balken(p * 0.4));
-        bilder = ergebnis.bilder;
+        try {
+          bilder = (await standbilder(video, (p) => balken(p * 0.4))).bilder;
+        } catch (err) {
+          // Gemini bekommt das Video selbst und kommt ohne Standbilder aus
+          if (settings.anbieter !== 'gemini' || !settings.geminiKey) throw err;
+        }
         $('#frames').innerHTML = bilder.map((b) => `<img src="${objectUrl(b.blob)}" alt="">`).join('');
       }
       balken(0.5);
-      const daten = await rezeptErkennen({ bilder, beschreibung: text, link: quelle }, settings, status);
+      const daten = await rezeptErkennen({ bilder, video, beschreibung: text, link: quelle }, settings, status);
       balken(0.95);
       status('Rezept speichern …');
-      const id = await rezeptSpeichern(daten, bilder, quelle, text);
+      // Mit Video liefert Gemini Zeitpunkte, die Bilder dazu sind dann genauer als die Standbilder
+      const id = await rezeptSpeichern(daten, daten.bilder?.length ? daten.bilder : bilder, quelle, text);
       balken(1);
       toast('Rezept gespeichert');
       location.hash = `#/rezept/${id}`;
@@ -524,6 +549,7 @@ async function rezeptSpeichern(daten, bilder, quelle, originaltext) {
     createdAt: Date.now(),
     titel: daten.titel,
     beschreibung: daten.beschreibung,
+    abschrift: daten.abschrift || '',
     portionen: daten.portionen,
     zubereitungszeit: daten.zubereitungszeit,
     zutaten: daten.zutaten,

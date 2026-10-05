@@ -1,15 +1,18 @@
-// Aus Standbildern, Beschreibung und Link ein Rezept machen.
-// Zwei Anbieter: Google Gemini (kostenloses Kontingent) oder Claude (kostenpflichtig).
+// Aus dem Video (oder Standbildern daraus), der Beschreibung und dem Link ein Rezept machen.
+// Anbieter: Google Gemini (kostenlos, bekommt das ganze Video mit Ton), Groq (kostenlos, Standbilder)
+// oder Claude (kostenpflichtig, Standbilder).
 // Der API-Schlüssel bleibt auf dem Handy; die Anfrage geht direkt vom Browser an den Anbieter.
 
 import Anthropic from './vendor/anthropic-sdk.mjs';
-import { blobToBase64, zeitLabel } from './video.js';
+import { blobToBase64, zeitLabel, bilderBeiZeiten } from './video.js';
 
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['ist_rezept', 'titel', 'beschreibung', 'portionen', 'zubereitungszeit', 'zutaten', 'schritte', 'titelbild', 'tags', 'hinweise'],
+  required: ['abschrift', 'ist_rezept', 'titel', 'beschreibung', 'portionen', 'zubereitungszeit', 'zutaten', 'schritte', 'titelbild', 'titelbild_zeit_s', 'tags', 'hinweise'],
   properties: {
+    // Steht absichtlich zuerst: Die KI schreibt erst alles ab und baut dann das Rezept daraus.
+    abschrift: { type: 'string', description: 'wörtlich in der Originalsprache: was gesagt wird, eingeblendeter Text und die Zutatenliste aus der Beschreibung' },
     ist_rezept: { type: 'boolean', description: 'false, wenn im Material kein Rezept zu erkennen ist' },
     titel: { type: 'string' },
     beschreibung: { type: 'string', description: 'ein bis zwei Sätze, worum es geht' },
@@ -20,10 +23,11 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['gruppe', 'menge', 'einheit', 'name', 'hinweis', 'geschaetzt'],
+        required: ['gruppe', 'menge', 'menge_bis', 'einheit', 'name', 'hinweis', 'geschaetzt'],
         properties: {
           gruppe: { type: 'string', description: 'z. B. "Teig", "Soße"; leer wenn es keine Gruppen gibt' },
-          menge: { type: ['number', 'null'], description: 'Zahl, null bei "nach Geschmack"' },
+          menge: { type: ['number', 'null'], description: 'Zahl (½ = 0.5), null bei "nach Geschmack"' },
+          menge_bis: { type: ['number', 'null'], description: 'obere Grenze bei Bereichen wie "2–3 EL", sonst null' },
           einheit: { type: 'string', description: 'g, kg, ml, l, EL, TL, Stück, Prise, Dose … oder leer' },
           name: { type: 'string' },
           hinweis: { type: 'string', description: 'z. B. "gewürfelt", leer wenn nichts' },
@@ -36,27 +40,39 @@ const SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['text', 'bild'],
+        required: ['text', 'bild', 'zeit_s'],
         properties: {
           text: { type: 'string' },
           bild: { type: ['integer', 'null'], description: 'Nummer des Standbilds, das diesen Schritt am besten zeigt' },
+          zeit_s: { type: ['number', 'null'], description: 'nur mit Video: Sekunde, in der der Schritt am besten zu sehen ist' },
         },
       },
     },
     titelbild: { type: ['integer', 'null'], description: 'Nummer des Standbilds mit dem fertigen Gericht' },
+    titelbild_zeit_s: { type: ['number', 'null'], description: 'nur mit Video: Sekunde, in der das fertige Gericht am schönsten zu sehen ist' },
     tags: { type: 'array', items: { type: 'string' } },
     hinweise: { type: 'string', description: 'Tipps aus dem Video, oder was unklar war; leer wenn nichts' },
   },
 };
 
-export const SYSTEM = `Du machst aus Instagram-Koch-Reels ein Rezept zum Nachkochen, auf Deutsch.
-Du bekommst Standbilder aus dem Video (nummeriert, mit Zeitstempel), die Beschreibung des Posts und eventuell den Link.
-Lies eingeblendeten Text und Untertitel in den Bildern und nutze die Beschreibung. Was du siehst, hat Vorrang vor Vermutungen.
-- Zutaten mit Mengen in metrischen Einheiten (Cups, oz, °F umrechnen). Fehlt eine Menge, schätze sie für die angegebene Portionenzahl und setze "geschaetzt" auf true.
-- Schritte in der Reihenfolge des Videos, kurz und konkret, mit Temperatur, Zeit und Hitzestufe, wenn erkennbar.
-- Zu jedem Schritt die Nummer des Standbilds, das ihn am besten zeigt, sonst null. Jedes Bild höchstens einmal.
-- Werbung, Hashtags und Aufrufe wie "Folgt mir" weglassen.
-Wenn kein Rezept erkennbar ist, setze "ist_rezept" auf false und erkläre es in "hinweise".`;
+export const SYSTEM = `Du machst aus Instagram-Koch-Reels ein vollständiges, genaues Rezept zum Nachkochen, auf Deutsch.
+Du bekommst das Video selbst (mit Ton) oder nummerierte Standbilder daraus (mit Zeitstempel), dazu die Beschreibung des Posts und eventuell den Link.
+
+Geh gründlich vor:
+1. Schreib zuerst in "abschrift" alles ab, was zum Rezept gesagt, eingeblendet oder in der Beschreibung geschrieben wird: gesprochener Text, eingeblendeter Text und Untertitel (mit Zeitstempel), die Zutatenliste aus der Beschreibung. Wörtlich und in der Originalsprache, ohne Werbung und Hashtags.
+2. Bau das Rezept aus dieser Abschrift und dem, was zu sehen ist. Genannte Mengen haben Vorrang vor allem, was du nur siehst. Erfinde keine Zutaten und keine Schritte.
+3. Prüf zum Schluss: Jede Zutat, die in einem Schritt vorkommt, steht in der Zutatenliste, und jede Zutat der Liste wird in einem Schritt verwendet. Steht in der Beschreibung eine Zutatenliste, übernimm sie vollständig.
+
+Zutaten:
+- Mengen genau so, wie sie genannt werden. Brüche als Dezimalzahl (½ = 0.5). Bereiche wie "2–3 EL" als menge 2 und menge_bis 3.
+- Umrechnen in metrische Einheiten (Cups, oz, lb, °F); Löffel als EL und TL.
+- Nur wenn nirgends eine Menge genannt wird, schätz sie passend zur Portionenzahl und setz "geschaetzt" auf true.
+- "name" ohne Menge; Angaben wie "gewürfelt" oder "zimmerwarm" in "hinweis".
+Schritte:
+- In der Reihenfolge des Videos, jeder Schritt eine Handlung, konkret mit Menge, Temperatur, Zeit und Hitzestufe, sobald sie genannt oder zu sehen sind.
+- Mit Video: "zeit_s" ist die Sekunde, in der der Schritt am besten zu sehen ist, "bild" ist null. Mit Standbildern: "bild" ist die Nummer des passenden Standbilds (jedes höchstens einmal), "zeit_s" ist null. Für "titelbild" und "titelbild_zeit_s" genauso.
+Übersetz alles außer der Abschrift ins Deutsche. Übergeh die Bedienelemente von Instagram (Likes, Kommentare, Benutzernamen, Uhrzeit, Musiktitel), Werbung, Hashtags und Aufrufe wie "Folgt mir".
+Wenn kein Rezept erkennbar ist, setz "ist_rezept" auf false und erklär es in "hinweise".`;
 
 export class ExtraktionsFehler extends Error {
   constructor(message, { keinRezept = false } = {}) {
@@ -76,18 +92,54 @@ function fehlertext(err) {
 }
 
 function eingabePruefen(eingabe) {
-  if (!eingabe.bilder.length && !eingabe.beschreibung.trim()) {
+  if (!eingabe.bilder.length && !eingabe.video && !eingabe.beschreibung.trim()) {
     throw new ExtraktionsFehler('Bitte ein Video auswählen oder die Beschreibung einfügen.');
   }
 }
 
-function textTeil(eingabe) {
+// Groq und Claude sehen nur Standbilder; ließ sich das Video nicht lesen, bleibt nur der Text.
+function standbilderPruefen(eingabe) {
+  if (!eingabe.bilder.length && !eingabe.beschreibung.trim()) {
+    throw new ExtraktionsFehler('Das Video lässt sich auf diesem Handy nicht lesen. Bitte die Beschreibung einfügen oder Gemini nutzen.');
+  }
+}
+
+function textTeil(eingabe, { mitVideo = false } = {}) {
   const teile = [];
   if (eingabe.link) teile.push(`Link: ${eingabe.link}`);
   teile.push(eingabe.beschreibung.trim() ? `Beschreibung des Posts:\n${eingabe.beschreibung.trim()}` : 'Keine Beschreibung vorhanden.');
-  if (!eingabe.bilder.length) teile.push('Es gibt keine Standbilder, nur den Text.');
+  if (!mitVideo && !eingabe.bilder.length) teile.push('Es gibt kein Video und keine Standbilder, nur den Text.');
   return teile.join('\n\n');
 }
+
+// Mengen kommen nicht immer als Zahl, vor allem von Groq: "1/2", "1 ½", "0,5", "2-3".
+const BRUCH = { '½': 0.5, '¼': 0.25, '¾': 0.75, '⅓': 1 / 3, '⅔': 2 / 3, '⅛': 0.125 };
+function zahlLesen(t) {
+  const s = String(t).trim().replace(',', '.').replace(/(\d)\s*([½¼¾⅓⅔⅛])/, '$1+$2');
+  let summe = 0;
+  for (const teil of s.split(/\s+|\+/).filter(Boolean)) {
+    if (BRUCH[teil] != null) summe += BRUCH[teil];
+    else if (/^\d+\/\d+$/.test(teil)) { const [z, n] = teil.split('/').map(Number); if (!n) return null; summe += z / n; }
+    else if (/^\d+(\.\d+)?$/.test(teil)) summe += Number(teil);
+    else return null;
+  }
+  return summe > 0 ? summe : null;
+}
+export function mengeLesen(menge, bis) {
+  let von = null;
+  let obere = typeof bis === 'number' ? bis : (bis != null ? zahlLesen(bis) : null);
+  if (typeof menge === 'number') von = menge;
+  else if (typeof menge === 'string') {
+    const [a, b] = menge.split(/\s*(?:-|–|bis)\s*/);
+    von = zahlLesen(a);
+    if (b != null && obere == null) obere = zahlLesen(b);
+  }
+  if (!(von > 0)) von = null;
+  if (von == null || !(obere > von)) obere = null;
+  return { menge: von, menge_bis: obere };
+}
+
+const sekunde = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
 
 function auswerten(text) {
   let daten;
@@ -99,17 +151,21 @@ function auswerten(text) {
   if (!daten.ist_rezept) throw new ExtraktionsFehler(daten.hinweise || 'In diesem Reel wurde kein Rezept gefunden.', { keinRezept: true });
   // Gemini und Groq halten sich nicht immer an jedes Feld: fehlende Teile auffüllen
   return {
+    abschrift: typeof daten.abschrift === 'string' ? daten.abschrift.trim() : '',
     titel: daten.titel || 'Ohne Titel',
     beschreibung: daten.beschreibung || '',
-    portionen: Number.isInteger(daten.portionen) ? daten.portionen : null,
+    portionen: Number.isInteger(daten.portionen) && daten.portionen > 0 ? daten.portionen : null,
     zubereitungszeit: daten.zubereitungszeit || '',
     zutaten: (daten.zutaten || []).map((z) => ({
-      gruppe: z.gruppe || '', menge: typeof z.menge === 'number' ? z.menge : null, einheit: z.einheit || '',
+      gruppe: z.gruppe || '', ...mengeLesen(z.menge, z.menge_bis), einheit: z.einheit || '',
       name: z.name || '', hinweis: z.hinweis || '', geschaetzt: Boolean(z.geschaetzt),
     })).filter((z) => z.name),
-    schritte: (daten.schritte || []).filter((x) => x.text).map((x) => ({ text: x.text, bild: Number.isInteger(x.bild) ? x.bild : null })),
+    schritte: (daten.schritte || []).filter((x) => x.text).map((x) => ({
+      text: x.text, bild: Number.isInteger(x.bild) ? x.bild : null, zeit_s: sekunde(x.zeit_s),
+    })),
     titelbild: Number.isInteger(daten.titelbild) ? daten.titelbild : null,
-    tags: daten.tags || [],
+    titelbild_zeit_s: sekunde(daten.titelbild_zeit_s),
+    tags: Array.isArray(daten.tags) ? daten.tags.filter((t) => typeof t === 'string') : [],
     hinweise: daten.hinweise || '',
   };
 }
@@ -137,6 +193,7 @@ export async function rezeptErkennen(eingabe, settings, onStatus = () => {}) {
 
 async function mitClaude(eingabe, settings, onStatus) {
   if (!settings.apiKey) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen Claude API-Schlüssel eintragen.');
+  standbilderPruefen(eingabe);
   const client = new Anthropic({ apiKey: settings.apiKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
 
   const content = [];
@@ -234,23 +291,15 @@ async function wartezeit(res) {
   return Number.isFinite(s) ? s : null;
 }
 
-async function mitGemini(eingabe, settings, onStatus) {
-  const key = settings.geminiKey;
-  if (!key) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen kostenlosen Gemini-Schlüssel eintragen.');
-
-  const parts = [];
-  for (const b of eingabe.bilder) {
-    parts.push({ text: `Standbild ${b.index} (${zeitLabel(b.zeit)})` });
-    parts.push({ inlineData: { mimeType: 'image/jpeg', data: await blobToBase64(b.blob) } });
-  }
-  parts.push({ text: textTeil(eingabe) });
+// Eine Anfrage an Gemini mit allen Ausweichwegen (Wiederholen, anderes Modell, kurz warten).
+// Gibt den Antworttext zurück; Fehler tragen den HTTP-Status in err.status.
+async function geminiSenden(parts, key, settings, onStatus) {
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: SYSTEM }] },
     contents: [{ role: 'user', parts }],
     generationConfig: { responseMimeType: 'application/json', responseSchema: geminiSchema(SCHEMA) },
   });
 
-  onStatus('Gemini liest das Rezept …');
   const anfrage = async (modell) => {
     try {
       return await fetch(`${GEMINI_API}/models/${encodeURIComponent(modell)}:generateContent?key=${encodeURIComponent(key)}`, {
@@ -297,7 +346,11 @@ async function mitGemini(eingabe, settings, onStatus) {
       res = await versuchen(modell, 1);
     }
   }
-  if (!res.ok) throw new ExtraktionsFehler(await geminiFehler(res));
+  if (!res.ok) {
+    const fehler = new ExtraktionsFehler(await geminiFehler(res));
+    fehler.status = res.status;
+    throw fehler;
+  }
 
   const data = await res.json();
   if (data.promptFeedback?.blockReason) throw new ExtraktionsFehler('Gemini hat die Anfrage abgelehnt.');
@@ -305,7 +358,121 @@ async function mitGemini(eingabe, settings, onStatus) {
   if (kandidat?.finishReason === 'MAX_TOKENS') throw new ExtraktionsFehler('Die Antwort war zu lang und wurde abgeschnitten.');
   const text = (kandidat?.content?.parts || []).map((p) => p.text || '').join('');
   if (!text) throw new ExtraktionsFehler('Gemini hat keine Antwort geliefert. Bitte erneut versuchen.');
-  return auswerten(text);
+  return text;
+}
+
+// ---------- Video an Gemini ----------
+// Gemini versteht Videos samt Ton: so landen auch gesprochene Mengen und kurz eingeblendeter Text im Rezept.
+// Kleine Videos gehen direkt in die Anfrage, größere über die Datei-Schnittstelle (Dateien löscht Google nach 2 Tagen selbst).
+
+const GEMINI_UPLOAD = 'https://generativelanguage.googleapis.com/upload/v1beta';
+const INLINE_MAX = 14 * 1024 * 1024;   // Base64 macht daraus ~19 MB, die Grenze pro Anfrage liegt bei 20 MB
+const UPLOAD_MAX = 300 * 1024 * 1024;
+
+function videoTyp(file) {
+  const t = file.type || '';
+  if (/quicktime/.test(t)) return 'video/mov';
+  return /^video\//.test(t) ? t : 'video/mp4';
+}
+
+async function geminiHochladen(file, mimeType, key, onStatus) {
+  const grenze = `kochbuch${Math.random().toString(36).slice(2)}`;
+  const body = new Blob([
+    `--${grenze}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ file: { displayName: 'reel' } })}\r\n`,
+    `--${grenze}\r\nContent-Type: ${mimeType}\r\n\r\n`, file, `\r\n--${grenze}--\r\n`,
+  ]);
+  const res = await fetch(`${GEMINI_UPLOAD}/files?uploadType=multipart&key=${encodeURIComponent(key)}`, {
+    method: 'POST', headers: { 'Content-Type': `multipart/related; boundary=${grenze}` }, body,
+  });
+  if (!res.ok) throw new Error(`Hochladen fehlgeschlagen (${res.status})`);
+  let datei = (await res.json()).file;
+  // Google bereitet das Video kurz auf, bevor es genutzt werden kann
+  for (let i = 0; datei?.state === 'PROCESSING' && i < 40; i++) {
+    onStatus('Gemini bereitet das Video vor …');
+    await pause(2000);
+    const r = await fetch(`${GEMINI_API}/${datei.name}?key=${encodeURIComponent(key)}`);
+    if (!r.ok) break;
+    datei = await r.json();
+  }
+  if (!datei?.uri || datei.state !== 'ACTIVE') {
+    if (datei?.name) fetch(`${GEMINI_API}/${datei.name}?key=${encodeURIComponent(key)}`, { method: 'DELETE' }).catch(() => {});
+    throw new Error('Video konnte nicht vorbereitet werden');
+  }
+  return datei;
+}
+
+// Die Zeitangaben der KI in echte Bilder umsetzen, die dann wie Standbilder gespeichert werden.
+async function bilderAusZeiten(daten, video) {
+  const zeiten = [...new Set([...daten.schritte.map((x) => x.zeit_s), daten.titelbild_zeit_s].filter((z) => z != null))];
+  if (!zeiten.length) return { ...daten, titelbild: null, schritte: daten.schritte.map((x) => ({ ...x, bild: null })), bilder: [] };
+  let gegriffen = [];
+  try {
+    gegriffen = await bilderBeiZeiten(video, zeiten);
+  } catch {
+    // Video lässt sich auf diesem Gerät nicht abspielen: Rezept trotzdem speichern, nur ohne Bilder
+  }
+  const bilder = [];
+  const nummer = new Map();
+  gegriffen.forEach((b, i) => {
+    if (!b) return;
+    bilder.push({ index: bilder.length + 1, zeit: b.zeit, blob: b.blob });
+    nummer.set(zeiten[i], bilder.length);
+  });
+  return {
+    ...daten,
+    schritte: daten.schritte.map((x) => ({ ...x, bild: nummer.get(x.zeit_s) ?? null })),
+    titelbild: nummer.get(daten.titelbild_zeit_s) ?? null,
+    bilder,
+  };
+}
+
+async function mitGemini(eingabe, settings, onStatus) {
+  const key = settings.geminiKey;
+  if (!key) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen kostenlosen Gemini-Schlüssel eintragen.');
+
+  const video = eingabe.video;
+  if (video && video.size <= UPLOAD_MAX) {
+    const mimeType = videoTyp(video);
+    let teil = null;
+    let datei = null;
+    try {
+      if (video.size <= INLINE_MAX) {
+        teil = { inlineData: { mimeType, data: await blobToBase64(video) } };
+      } else {
+        onStatus('Video zu Gemini hochladen …');
+        datei = await geminiHochladen(video, mimeType, key, onStatus);
+        teil = { fileData: { mimeType: datei.mimeType || mimeType, fileUri: datei.uri } };
+      }
+    } catch {
+      onStatus('Video ließ sich nicht hochladen, Gemini liest die Standbilder …');
+    }
+    if (teil) {
+      try {
+        onStatus('Gemini schaut sich das Video an …');
+        const text = await geminiSenden([{ text: 'Das Reel als Video:' }, teil, { text: textTeil(eingabe, { mitVideo: true }) }], key, settings, onStatus);
+        onStatus('Bilder zu den Schritten holen …');
+        return await bilderAusZeiten(auswerten(text), video);
+      } catch (err) {
+        // Nur wenn Gemini das Video selbst ablehnt, mit Standbildern weitermachen; sonst greift der Fallback (Groq)
+        if (err.keinRezept || ![400, 413].includes(err.status) || /Schlüssel/.test(err.message)) throw err;
+        onStatus('Gemini konnte das Video nicht lesen, nimmt die Standbilder …');
+      } finally {
+        if (datei) fetch(`${GEMINI_API}/${datei.name}?key=${encodeURIComponent(key)}`, { method: 'DELETE' }).catch(() => {});
+      }
+    }
+  }
+
+  if (!eingabe.bilder.length && !eingabe.beschreibung.trim()) {
+    throw new ExtraktionsFehler('Das Video ließ sich weder hochladen noch auf dem Handy lesen.');
+  }
+  const parts = [];
+  for (const b of eingabe.bilder) {
+    parts.push({ text: `Standbild ${b.index} (${zeitLabel(b.zeit)})` });
+    parts.push({ inlineData: { mimeType: 'image/jpeg', data: await blobToBase64(b.blob) } });
+  }
+  parts.push({ text: textTeil(eingabe) });
+  onStatus('Gemini liest das Rezept …');
+  return auswerten(await geminiSenden(parts, key, settings, onStatus));
 }
 
 // ---------- Groq ----------
@@ -383,6 +550,7 @@ async function groqAusweichmodell(key, ohne) {
 async function mitGroq(eingabe, settings, onStatus) {
   const key = settings.groqKey;
   if (!key) throw new ExtraktionsFehler('Bitte zuerst in den Einstellungen einen kostenlosen Groq-Schlüssel eintragen.');
+  standbilderPruefen(eingabe);
 
   const content = [];
   if (eingabe.bilder.length) {
