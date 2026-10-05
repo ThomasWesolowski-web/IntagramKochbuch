@@ -325,6 +325,9 @@ body.editing .tabbar { display: none; }
 .steps li.done .st p { color: var(--ink-3); }
 .steps li.done .st::before { background: var(--ok); color: #fff; }
 .note { background: var(--pastell-3); color: var(--ink); border-radius: 16px; padding: 12px 14px; font-size: .92rem; }
+.abschrift { background: var(--surface-2); border-radius: 16px; padding: 10px 14px; }
+.abschrift summary { cursor: pointer; font-weight: 800; color: var(--ink-2); font-size: .9rem; }
+.abschrift p { margin: 8px 0 2px; white-space: pre-wrap; font-size: .86rem; color: var(--ink-2); }
 .src { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-2); font-size: .88rem; font-weight: 600; word-break: break-all; }
 .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tags span { font-size: .8rem; font-weight: 800; color: var(--ink); background: var(--pastell-5); border-radius: 999px; padding: 4px 11px; }

@@ -1,7 +1,7 @@
 # Instagram Kochbuch
 
-Web-App (PWA) fürs Handy: Ein Instagram-Reel wird hochgeladen oder an die App geteilt, die App holt Standbilder
-aus dem Video und lässt eine KI daraus ein Rezept machen (Zutaten mit Mengen, Schritte mit Bild, Tipps).
+Web-App (PWA) fürs Handy: Ein Instagram-Reel wird hochgeladen oder an die App geteilt, eine KI macht daraus ein Rezept
+(Zutaten mit Mengen, Schritte mit Bild, Tipps). Gemini bekommt das ganze Video mit Ton, Groq und Claude Standbilder.
 Aufgebaut wie die Tagesbericht-App desselben Besitzers (ThomasWesolowski-web/Tagesbericht-App).
 
 ## Regeln
@@ -21,7 +21,7 @@ Aufgebaut wie die Tagesbericht-App desselben Besitzers (ThomasWesolowski-web/Tag
 |---|---|
 | `index.html`, `app.css` | Gerüst und Aussehen (Farben als CSS-Variablen, heller und dunkler Modus) |
 | `app.js` | Router (`#/`, `#/neu`, `#/rezept/<id>`, `#/rezept/<id>/bearbeiten`, `#/einstellungen`) und alle Ansichten |
-| `video.js` | Standbilder aus dem Video (6–12 Bilder, 640 px) |
+| `video.js` | Standbilder aus dem Video (8–20 Bilder, 768 px) und Bilder zu bestimmten Zeitpunkten (`bilderBeiZeiten`) |
 | `extract.js` | Anfragen an Gemini, Groq und Claude mit einem gemeinsamen JSON-Schema; Wiederholungen und Ausweichmodelle |
 | `db.js` | IndexedDB (`rezepte`, `bilder`, `eingang`) und Einstellungen |
 | `sw.js` | Offline-Cache und Empfang geteilter Reels (`share_target` in `manifest.webmanifest`, nur Android) |
@@ -29,7 +29,10 @@ Aufgebaut wie die Tagesbericht-App desselben Besitzers (ThomasWesolowski-web/Tag
 | `tests/e2e.mjs` | Browser-Test mit nachgestellten KI-Antworten |
 
 Grenzen, die schon geklärt sind: Ein Instagram-Link allein reicht nicht (Instagram blockt das Laden von außen),
-das Video muss heruntergeladen werden. Ton wird nicht ausgewertet. Groq nimmt höchstens 5 Bilder, daher Kollagen.
+das Video muss heruntergeladen werden. Gemini: Video bis 14 MB direkt in der Anfrage, größer über die Datei-Schnittstelle
+(multipart), lehnt Gemini das Video ab (400), gehen Standbilder hin; Gemini nennt Sekunden (`zeit_s`), die App holt dort die Bilder.
+Ton werten nur Gemini aus. Groq nimmt höchstens 5 Bilder, daher Kollagen. Feld `abschrift` steht im Schema zuerst,
+damit die KI erst alles abschreibt; die App zeigt es aufklappbar unter „Was die KI gelesen und gehört hat“.
 
 ## Testen
 
