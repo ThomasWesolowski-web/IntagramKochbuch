@@ -39,3 +39,6 @@ damit die KI erst alles abschreibt; die App zeigt es aufklappbar unter „Was di
 Vor jedem Push den Skill `app-testen` ausführen (`node tests/e2e.mjs`). Er braucht keine echten Schlüssel.
 Echte Anfragen an Gemini/Groq/Claude kann nur Tomek mit seinen Schlüsseln machen; das im Bericht ehrlich sagen.
 Vor dem Push außerdem den Agent `code-reviewer` über den Diff laufen lassen.
+
+Hängt die Veröffentlichung auf GitHub Pages (Auftrag „pages build and deployment“ bleibt in der Warteschlange),
+startet ein neuer Commit auf `main` einen frischen Auftrag.
